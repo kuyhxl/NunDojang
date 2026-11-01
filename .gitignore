@@ -25,5 +25,7 @@ events*.csv
 .DS_Store
 __pycache__/
 .venv/
+*.egg-info/
+.python-version
 .ipynb_checkpoints/
 node_modules/
