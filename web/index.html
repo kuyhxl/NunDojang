@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>눈도장 — ReadSeal</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><strong>눈도장</strong> <span class="sub">ReadSeal · 안구 신호 기반 정독 봉인</span></div>
+    <div class="status">
+      <span id="modeBadge" class="badge badge-mock" title="eyeTracker/movementDetector가 mock이면 MOCK, 실제 측정이면 REAL">MOCK</span>
+      <span id="camBadge" class="badge" title="측정 중이면 켜짐">● 카메라 꺼짐</span>
+      <span id="appVersion" class="muted"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="viewer">
+      <div class="toolbar">
+        <label class="btn">PDF 열기 <input id="pdfInput" type="file" accept="application/pdf" hidden></label>
+        <button id="prevBtn" class="btn" disabled>◀ 이전</button>
+        <span id="pageLabel">페이지 –/–</span>
+        <button id="nextBtn" class="btn" disabled>다음 ▶</button>
+        <span id="docName" class="muted"></span>
+      </div>
+      <div class="canvas-wrap"><canvas id="pdfCanvas"></canvas></div>
+      <p id="viewerMsg" class="msg">PDF를 열면 여기에 표시됩니다. 텍스트 선택이 가능한 단일 열 본문 PDF를 쓰세요.</p>
+    </section>
+
+    <aside class="panel">
+      <h2>측정</h2>
+      <div class="row">
+        <button id="camStartBtn" class="btn primary" disabled>카메라 켜기</button>
+        <button id="camStopBtn" class="btn" disabled>중지</button>
+        <button id="measureToggleBtn" class="btn" disabled>측정 일시정지</button>
+      </div>
+      <video id="camPreview" playsinline muted></video>
+      <dl class="stats">
+        <dt>본문 줄 수</dt><dd id="lineCount">–</dd>
+        <dt>줄바꿈 후보 사건</dt><dd id="eventCount">–</dd>
+        <dt>페이지 점수</dt><dd id="pageScore">–</dd>
+        <dt>유효 측정 시간</dt><dd id="validTime">–</dd>
+        <dt>깜빡임 횟수</dt><dd id="blinkCount">미설정</dd>
+        <dt>상태</dt><dd id="pageStatus">–</dd>
+      </dl>
+      <p id="detectorNote" class="msg warn">검출 기준 미설정 — A가 DETECTOR_CONFIG 값을 채우기 전까지 사건이 발행되지 않습니다.</p>
+
+      <h3>눈 움직임</h3>
+      <canvas id="irisGraph" width="360" height="110"></canvas>
+      <canvas id="earGraph" width="360" height="50"></canvas>
+
+      <h3>페이지</h3>
+      <ol id="pageList" class="page-list"></ol>
+
+      <h2>동의·서명</h2>
+      <button id="signRequestBtn" class="btn primary" disabled>동의·서명 진행</button>
+      <div id="signArea" hidden>
+        <label><input id="consentChk" type="checkbox"> 위 문서의 모든 페이지에 대해 읽기 기준을 충족했으며 내용에 동의합니다.</label>
+        <div class="row">
+          <canvas id="sigPad" width="320" height="120"></canvas>
+        </div>
+        <div class="row">
+          <button id="sigClearBtn" class="btn">지우기</button>
+          <label class="btn">서명 이미지 올리기 <input id="sigUpload" type="file" accept="image/png,image/jpeg" hidden></label>
+          <button id="signCompleteBtn" class="btn primary" disabled>서명 완료</button>
+        </div>
+      </div>
+      <p id="signMsg" class="msg"></p>
+
+      <h2>봉인</h2>
+      <button id="sealBtn" class="btn primary" disabled>봉인 발급</button>
+      <p id="sealMsg" class="msg"></p>
+
+      <h2>기록</h2>
+      <div class="row">
+        <button id="dlSamplesBtn" class="btn">samples.csv</button>
+        <button id="dlEventsBtn" class="btn">events.csv</button>
+        <button id="dlSessionBtn" class="btn">session.json</button>
+      </div>
+      <p class="muted small">판정은 초기 기준에 따른 시연용입니다. 영상·PDF는 브라우저 밖으로 나가지 않습니다.</p>
+    </aside>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

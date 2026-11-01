@@ -1,0 +1,12 @@
+{
+  "_note": "통합 점검용 인공 fixture. 사람의 독서 실험이 아님. 공통 스크립트 27절 1~7, 19번.",
+  "cases": [
+    { "id": 1, "name": "8사건/10줄, 10s/8.5s → 통과", "pageState": { "pageId": 1, "lineCount": 10, "supported": true, "acceptedEventCount": 8, "activeMs": 10000, "validMs": 8500 }, "expect": { "rawScore": 80, "passed": true, "status": "passed" } },
+    { "id": 3, "name": "사건 충분, validMs 500 → 미달", "pageState": { "pageId": 1, "lineCount": 10, "supported": true, "acceptedEventCount": 9, "activeMs": 10000, "validMs": 500 }, "expect": { "passed": false, "status": "insufficient_quality", "reasonIncludes": ["insufficient_measurement"] } },
+    { "id": 4, "name": "validRatio 0.6 → 미달", "pageState": { "pageId": 1, "lineCount": 10, "supported": true, "acceptedEventCount": 9, "activeMs": 10000, "validMs": 6000 }, "expect": { "passed": false, "status": "insufficient_quality", "reasonIncludes": ["insufficient_quality"] } },
+    { "id": 7, "name": "lineCount null 지원불가 → 미통과, 점수 null", "pageState": { "pageId": 1, "lineCount": null, "supported": false, "acceptedEventCount": 5, "activeMs": 10000, "validMs": 9000 }, "expect": { "passed": false, "status": "unsupported", "rawScore": null } },
+    { "id": 19, "name": "사건 0, validMs 5000 → no_reading_events", "pageState": { "pageId": 1, "lineCount": 10, "supported": true, "acceptedEventCount": 0, "activeMs": 6000, "validMs": 5000 }, "expect": { "passed": false, "status": "not_passed", "reasonIncludes": ["score_below_threshold", "no_reading_events"] } },
+    { "id": 20, "name": "사건 3, validMs 5000 → no_reading_events 없음", "pageState": { "pageId": 1, "lineCount": 10, "supported": true, "acceptedEventCount": 3, "activeMs": 6000, "validMs": 5000 }, "expect": { "passed": false, "status": "not_passed", "reasonExcludes": ["no_reading_events"] } },
+    { "id": 21, "name": "미측정 → unmeasured, 점수 0", "pageState": { "pageId": 2, "lineCount": 12, "supported": true, "acceptedEventCount": 0, "activeMs": 0, "validMs": 0 }, "expect": { "passed": false, "status": "unmeasured", "rawScore": 0 } }
+  ]
+}

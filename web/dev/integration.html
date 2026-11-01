@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>눈도장 · 통합 점검 (fixture)</title><link rel="stylesheet" href="../styles.css">
+<style>body{padding:16px} table{border-collapse:collapse;font-size:13px} td,th{border:1px solid #ddd;padding:4px 8px} .ok{color:#1e8a4b} .ng{color:#c0392b}</style></head>
+<body>
+<h1>통합 점검 — 시험 모드 (fixture)</h1>
+<p class="msg warn">인공 데이터로 점수·세션·서명 규칙을 검사하는 화면입니다. 실제 측정 결과가 아닙니다.</p>
+<h2>1. pageScoring fixture</h2>
+<table id="scoreTable"><thead><tr><th>#</th><th>이름</th><th>raw</th><th>status</th><th>passed</th><th>reasonCodes</th><th>결과</th></tr></thead><tbody></tbody></table>
+<h2>2. sessionStore 규칙</h2>
+<ul id="storeChecks"></ul>
+<script type="module" src="./integration.js"></script>
+</body>
+</html>

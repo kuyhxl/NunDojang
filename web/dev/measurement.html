@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>눈도장 · 측정 점검 (A)</title><link rel="stylesheet" href="../styles.css">
+<style>body{padding:16px;max-width:900px;margin:0 auto}</style></head>
+<body>
+<h1>측정 점검 화면 — A(박민서) 소유</h1>
+<p class="msg">이 화면과 <code>measurement.js</code>는 A가 자유롭게 바꿉니다. 목표: 카메라 켜기 → 양쪽 눈 상대 x·EAR 그래프 → samples.csv 저장. 제품 화면(index.html)의 DOM은 건드리지 않습니다.</p>
+<div class="row">
+  <button id="startBtn" class="btn primary">카메라 켜기</button>
+  <button id="stopBtn" class="btn" disabled>중지</button>
+  <button id="dlBtn" class="btn" disabled>samples.csv</button>
+  <span id="fps" class="muted"></span>
+</div>
+<video id="video" playsinline muted style="width:320px;background:#111;transform:scaleX(-1)"></video>
+<h3>홍채 상대 x (0~1)</h3><canvas id="irisGraph" width="860" height="140"></canvas>
+<h3>EAR</h3><canvas id="earGraph" width="860" height="70"></canvas>
+<pre id="diag" class="small muted"></pre>
+<script type="module" src="./measurement.js"></script>
+</body>
+</html>
