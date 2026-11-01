@@ -17,17 +17,20 @@
 
 ## 실행 (로컬)
 
-1. Python 3 확인: `python3 --version`
-2. 외부 자산 받기 (처음 한 번): `python3 tools/setup_assets.py`
-   - `web/vendor/`에 MediaPipe·PDF.js·pdf-lib, `web/models/`에 얼굴 모델을 내려받습니다.
-   - 네트워크가 안 되면 `docs/dependencies.md`의 수동 다운로드 표를 따릅니다.
-3. 서버 실행: `python3 tools/serve_local.py` (기본 `http://localhost:8000/`, 포트 충돌 시 `--port 8001`)
-4. Chrome에서 `http://localhost:8000/` 접속 → PDF 열기 → 카메라 켜기
-5. A 단독 점검 화면: `http://localhost:8000/dev/measurement.html`
-6. 통합 점검(fixture): `http://localhost:8000/dev/integration.html`
-7. 종료: 터미널에서 Ctrl+C
+처음이면 `docs/SETUP.md`를 따라 **uv**를 설치하세요 (한 줄, 한 번).
 
-`index.html`을 더블클릭해서 여는 `file://` 실행은 지원하지 않습니다.
+```
+uv run tools/setup_assets.py   # 처음 한 번: MediaPipe·PDF.js·pdf-lib·모델 다운로드
+uv run nundojang               # 서버 실행 → http://localhost:8000/
+```
+
+- A 측정 점검: `http://localhost:8000/dev/measurement.html`
+- 통합 점검(fixture): `http://localhost:8000/dev/integration.html`
+- API 문서: `http://localhost:8000/api/docs` (지금은 health와 501 자리뿐)
+- B 분석 환경: `uv sync --group analysis` → `uv run jupyter lab`
+- uv 없이 비상 실행: `python3 tools/serve_local.py` (표준 라이브러리만, 동작 동일)
+
+`index.html`을 더블클릭해서 여는 `file://` 실행은 지원하지 않습니다. 서버는 FastAPI지만 **PDF도 영상도 받지 않습니다** — 측정·점수·서명·봉인은 전부 브라우저에서 돌아가고, `/api/*`는 봉인 2단계·배포를 위한 확장 자리입니다.
 
 ## 폴더
 
@@ -39,13 +42,16 @@ web/        사이트 본체 (게시 대상은 이 폴더뿐)
   models/   face_landmarker.task · reading-model.json(선택)
 analysis/   B의 Python 분석 (앱 실행과 분리)
 docs/       공통 스크립트 · 인터페이스 · 의존성 · 결정 기록 · 역할별 문서
-tools/      serve_local.py · setup_assets.py
+server/     FastAPI 앱 (정적 서빙 + /api 확장 자리)
+tools/      serve_local.py(비상용) · setup_assets.py
+pyproject.toml · uv.lock  Python 환경 (uv)
 demo/       시연 PDF · 수동 줄 수 정답 · 시연 대본
 ```
 
 ## 현재 상태 (2026-11-01, 뼈대)
 
-- [x] 폴더 구조, 공통 계약·설정, 로컬 서버, 자산 다운로드 스크립트
+- [x] 폴더 구조, 공통 계약·설정, FastAPI 로컬 서버(uv), 자산 다운로드 스크립트
+- [x] dimension.dev 기반 UI, 리퀴드 글라스 눈 물방울, 빈 상태·검색
 - [x] `pageScoring.js` 순수 함수 구현 + fixture 점검 페이지
 - [ ] PDF.js 표시·줄 수 계산 (C, 단계 0~1)
 - [ ] 실제 카메라 측정 (A, 단계 1) — 지금은 `eyeTracker.js`가 mock

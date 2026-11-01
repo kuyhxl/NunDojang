@@ -3,11 +3,13 @@
 앱 실행과 분리된 Python 분석. 브라우저가 이 코드를 호출하지 않는다.
 
 ## 환경
+저장소 루트에서:
 ```
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync --group analysis
+uv run jupyter lab
 ```
-Colab에서 해도 된다. 실제 사용한 버전은 `requirements.txt`와 `../docs/dependencies.md`에 기록.
+버전은 루트 `uv.lock`에 고정된다. 패키지를 추가하려면 `uv add --group analysis <패키지>` 후 `pyproject.toml`·`uv.lock`을 함께 커밋.
+Colab에서 해도 된다 — 그 경우 `requirements.txt`는 참고용.
 
 ## 폴더
 - `notebooks/` 탐색용 노트북
