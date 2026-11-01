@@ -17,7 +17,14 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
   function emit() {
     // 가짜 샘플: 눈이 천천히 좌우로 흔들리는 사인파. 실제 측정이 아니다.
     const tMs = Math.round(performance.now() - sessionT0);
-    const x = 0.5 + 0.08 * Math.sin(tMs / 400);
+    // 가짜 읽기 궤적: 2.4초 동안 왼쪽→오른쪽으로 천천히(톱니), 줄 끝에서 왼쪽으로 급히 되돌아감.
+    // 스프링 물방울의 관성(오버슈트)이 보이도록 만든 것이며 실제 측정이 아니다.
+    const period = 2400, phase = (tMs % period) / period;
+    const jitter = (Math.random() - 0.5) * 0.01;
+    const x = 0.36 + phase * 0.28 + jitter;
+    // 깜빡임 흉내: 3.7초마다 120ms 동안 EAR 하락
+    const blink = (tMs % 3700) < 120;
+    const ear = blink ? 0.08 : 0.3;
     onSample({
       contractVersion: CONTRACT_VERSION,
       source: 'mock',
@@ -27,7 +34,7 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
       valid: true,
       leftIrisX: x, rightIrisX: x + 0.01,
       leftIrisY: null, rightIrisY: null,
-      leftEar: 0.3, rightEar: 0.3,
+      leftEar: ear, rightEar: ear,
       headMotion: null,
       invalidReason: null
     });

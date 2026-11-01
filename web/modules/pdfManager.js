@@ -42,7 +42,7 @@ export async function createPdfManager({ canvasElement, config }) {
     await task.promise;
     if (mySeq !== renderSeq) return null; // 늦게 끝난 렌더는 무시
 
-    const lines = await estimateLineCount(page);
+    const lines = await estimateLineCount(page, viewport);
     return { pageId, ...lines };
   }
 
@@ -51,10 +51,10 @@ export async function createPdfManager({ canvasElement, config }) {
    * 1차 규칙: 같은 줄 = y 차이가 글자 높이의 절반 이하. 머리말·꼬리말 제외 규칙은 아직 없음 (사람 대조 필요).
    * demo/reading-demo-ground-truth.json과 반드시 대조한다.
    */
-  async function estimateLineCount(page) {
+  async function estimateLineCount(page, viewport) {
     const content = await page.getTextContent();
     const items = content.items.filter((it) => it.str && it.str.trim().length > 0 && it.height > 0);
-    if (items.length === 0) return { lineCount: null, supported: false, unsupportedReason: 'no_text' };
+    if (items.length === 0) return { lineCount: null, supported: false, unsupportedReason: 'no_text', lineBoxes: [] };
     const rows = [];
     const sorted = items.map((it) => ({ y: it.transform[5], h: it.height })).sort((a, b) => b.y - a.y);
     for (const it of sorted) {
@@ -63,7 +63,17 @@ export async function createPdfManager({ canvasElement, config }) {
       rows.push(it);
     }
     if (rows.length === 0) return { lineCount: null, supported: false, unsupportedReason: 'line_count_failed' };
-    return { lineCount: rows.length, supported: true, unsupportedReason: null };
+    // 줄 위치를 캔버스 픽셀로 (위에서 아래 순). 계약 밖의 표시용 부가 정보.
+    const lineBoxes = rows.map((r) => { const [, top] = viewport.convertToViewportPoint(0, r.y + r.h); return { top, height: r.h * viewport.scale }; });
+    return { lineCount: rows.length, supported: true, unsupportedReason: null, lineBoxes };
+  }
+
+  /** 검색용 페이지 텍스트 (계약 밖, 표시 보조). */
+  async function getPageText(pageId) {
+    if (!doc) return '';
+    const page = await doc.getPage(pageId);
+    const content = await page.getTextContent();
+    return content.items.map((it) => it.str).join(' ');
   }
 
   async function close() {
@@ -72,5 +82,5 @@ export async function createPdfManager({ canvasElement, config }) {
     doc = null;
   }
 
-  return { open, renderPage, close };
+  return { open, renderPage, getPageText, close };
 }

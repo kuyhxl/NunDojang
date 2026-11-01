@@ -10,6 +10,7 @@ import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './mo
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore } from './modules/pageScoring.js';
+import { createEyeGlass } from './modules/eyeGlass.js';
 
 const $ = (id) => document.getElementById(id);
 const config = DEFAULT_CONFIG;
@@ -33,14 +34,16 @@ let currentFile = null;
 let sigPad = null;
 let signaturePng = null, signatureMethod = null;
 const graph = { iris: [], ear: [], max: 300 };
+const eyeGlass = createEyeGlass($('eyeGlass'));
+if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
 
 const uid = (p) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const nowMs = () => performance.now() - sessionT0;
 
 // ---------- 초기화 ----------
 $('appVersion').textContent = APP_VERSION;
-$('modeBadge').textContent = MODE.toUpperCase();
-$('modeBadge').className = `badge ${MODE === 'mock' ? 'badge-mock' : 'badge-real'}`;
+function setModeBadge(hasDoc) { $('modeBadge').textContent = hasDoc ? MODE.toUpperCase() : '대기 중'; $('modeBadge').className = hasDoc && MODE === 'real' ? 'is-real' : ''; }
+setModeBadge(false);
 if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden = true;
 
 (async () => {
@@ -52,14 +55,17 @@ if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden 
 })();
 
 // ---------- PDF ----------
-$('pdfInput').addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
+async function openPdfFile(file) {
   if (!file || !pdf) return;
+  if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { setMsg('viewerMsg', 'PDF 파일만 열 수 있습니다.', 'bad'); return; }
   await closeDocument();
   try {
     const { pageCount: n } = await pdf.open(file);
     pageCount = n; currentFile = file; currentDocName = file.name;
-    $('docName').textContent = `${file.name} · ${n}쪽`;
+    $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
+    $('docName').textContent = `${n}쪽`;
+    $('searchInput').disabled = false;
+    searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
     sessionT0 = performance.now(); segmentCounter = 0;
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
@@ -67,11 +73,21 @@ $('pdfInput').addEventListener('change', async (e) => {
     $('camStartBtn').disabled = false;
     await goToPage(1);
     setMsg('viewerMsg', '', '');
+    document.body.classList.remove('is-empty');
+    setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
   }
-  e.target.value = '';
-});
+}
+for (const id of ['pdfInput', 'pdfInput2']) {
+  $(id).addEventListener('change', async (e) => { await openPdfFile(e.target.files?.[0]); e.target.value = ''; });
+}
+// 드래그앤드롭 (드롭 영역 + 문서 패널)
+for (const el of [$('dropZone'), document.querySelector('.pane')]) {
+  el.addEventListener('dragover', (e) => { e.preventDefault(); $('dropZone').classList.add('is-over'); });
+  el.addEventListener('dragleave', () => $('dropZone').classList.remove('is-over'));
+  el.addEventListener('drop', async (e) => { e.preventDefault(); $('dropZone').classList.remove('is-over'); await openPdfFile(e.dataTransfer?.files?.[0]); });
+}
 
 $('prevBtn').addEventListener('click', () => goToPage(currentPage - 1));
 $('nextBtn').addEventListener('click', () => goToPage(currentPage + 1));
@@ -84,9 +100,11 @@ async function goToPage(pageId) {
   currentPage = pageId;
   const info = await pdf.renderPage(pageId);
   if (!info) return; // 늦은 렌더
-  store.registerPage(info);
+  store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
+  eyeGlass.setLines(info.lineBoxes ?? []);
   $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
+  updateProgress();
   renderPanel();
   await sleep(config.pageSettleMs);
   if (measuring && info.supported && !document.hidden) beginSegment();
@@ -97,7 +115,11 @@ async function closeDocument() {
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
   if (pdf) await pdf.close();
-  $('pageList').innerHTML = ''; $('pageLabel').textContent = '페이지 –/–';
+  $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
+  $('pageScore').textContent = '–'; $('pageStatus').textContent = 'PDF를 열면 측정이 시작됩니다'; $('pageStatus').className = 'status';
+  for (const id of ['lineCount', 'eventCount', 'validTime']) $(id).textContent = '–';
+  $('searchInput').disabled = true; $('searchInput').value = '';
+  document.body.classList.add('is-empty'); document.body.classList.remove('is-live'); setModeBadge(false);
   $('signRequestBtn').disabled = true; $('sealBtn').disabled = true; $('signArea').hidden = true;
   updateCamBadge(false);
 }
@@ -151,18 +173,51 @@ $('measureToggleBtn').addEventListener('click', () => {
   updateMeasureBtn();
 });
 function updateMeasureBtn() { $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개'; }
-function updateCamBadge(on) { $('camBadge').textContent = on ? '● 카메라 켜짐' : '● 카메라 꺼짐'; $('camBadge').className = `badge ${on ? 'badge-on' : ''}`; }
+function updateCamBadge(on) { $('camBadge').innerHTML = `<span class="dot" aria-hidden="true"></span>${on ? '카메라 켜짐' : '카메라 꺼짐'}`; $('camBadge').className = on ? 'is-on' : ''; document.body.classList.toggle('is-live', on); if (!on) eyeGlass.idle(); }
 
 function handleSample(sample) {
   pushGraph(sample);
+  eyeGlass.update(sample);
   if (!store || !segmentOpen) return;
   if (sample.tMs < segmentStartMs) return; // 구간 시작 전 프레임은 버림
   const segmentId = `seg-${segmentCounter}`;
   store.acceptSample({ sample, pageId: currentPage, segmentId });
   const events = detector.push({ sample, pageId: currentPage, segmentId });
-  if (events.length) store.acceptEvents(events);
+  if (events.length) { const r = store.acceptEvents(events); if (r.accepted) eyeGlass.advance(r.accepted); }
   throttledRender();
 }
+
+// ---------- 검색 (페이지 단위) ----------
+let searchCache = null; // [pageText...]
+async function buildSearchCache() {
+  if (searchCache || !pdf?.getPageText) return;
+  searchCache = [];
+  for (let i = 1; i <= pageCount; i++) searchCache.push((await pdf.getPageText(i)).toLowerCase());
+}
+$('searchInput').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter' || !store) return;
+  const q = e.target.value.trim().toLowerCase(); if (!q) return;
+  await buildSearchCache();
+  if (!searchCache) return;
+  for (let k = 1; k <= pageCount; k++) {
+    const p = ((currentPage + k - 1) % pageCount) + 1;
+    if (searchCache[p - 1].includes(q)) { await goToPage(p); setMsg('viewerMsg', `${p}쪽에서 "${e.target.value.trim()}" 찾음`, ''); return; }
+  }
+  setMsg('viewerMsg', `"${e.target.value.trim()}"을(를) 찾지 못했습니다`, '');
+});
+document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
+
+// ---------- 진행선: 문서 전체 대비 현재 위치 (페이지 + 페이지 안 스크롤) ----------
+function updateProgress() {
+  if (!pageCount) { $('progressDot').style.left = '0%'; return; }
+  const frame = $('pdfCanvas').parentElement;
+  const rect = frame.getBoundingClientRect();
+  const visible = Math.min(1, Math.max(0, (window.innerHeight - rect.top) / Math.max(rect.height, 1)));
+  const inPage = pageCount === 1 ? visible : visible; // 페이지 안 스크롤 비율
+  const pct = ((currentPage - 1) + inPage) / pageCount * 100;
+  $('progressDot').style.left = `${Math.min(100, Math.max(0, pct)).toFixed(2)}%`;
+}
+window.addEventListener('scroll', () => requestAnimationFrame(updateProgress), { passive: true });
 
 // ---------- 화면 ----------
 let renderPending = false;
@@ -184,9 +239,12 @@ function renderPanel() {
   const snap = store.getSnapshot();
   $('pageList').innerHTML = snap.pages.map((pg) => {
     const e = pg.evaluation;
-    return `<li class="${pg.pageId === currentPage ? 'current' : ''}"><span class="st-${e.status}">${statusText(e)}</span> · ${formatScore(e)}</li>`;
+    return `<li class="st-${e.status} ${pg.pageId === currentPage ? 'current' : ''}" title="${statusText(e)}"><span>${pg.pageId}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');
   $('signRequestBtn').disabled = !snap.canSign;
+  $('navSignBtn').disabled = !snap.canSign;
+  $('navPages').textContent = `페이지 ${currentPage}/${pageCount}`;
+  $('navScore').textContent = `점수 ${formatScore(ev)}`;
 }
 
 function statusText(ev) {
@@ -204,8 +262,8 @@ function pushGraph(s) {
   const ear = s.leftEar !== null && s.rightEar !== null ? (s.leftEar + s.rightEar) / 2 : null;
   graph.iris.push(x); graph.ear.push(ear);
   if (graph.iris.length > graph.max) { graph.iris.shift(); graph.ear.shift(); }
-  drawSeries($('irisGraph'), graph.iris, 0, 1, '#1f5fbf');
-  drawSeries($('earGraph'), graph.ear, 0, 0.5, '#1e8a4b');
+  drawSeries($('irisGraph'), graph.iris, 0, 1, '#ededed');
+  drawSeries($('earGraph'), graph.ear, 0, 0.5, '#686868');
 }
 function drawSeries(canvas, data, lo, hi, color) {
   const ctx = canvas.getContext('2d'); const W = canvas.width, H = canvas.height;
@@ -221,12 +279,15 @@ function drawSeries(canvas, data, lo, hi, color) {
 
 // ---------- 서명 ----------
 sigPad = createSignaturePad($('sigPad'));
-$('signRequestBtn').addEventListener('click', () => {
+const openSign = () => {
   endSegment('sign_requested'); measuring = false; updateMeasureBtn();
   renderPanel();
   if (!store.canSign()) { setMsg('signMsg', '기준 미달 페이지가 있어 서명을 열 수 없습니다.', 'warn'); return; }
   $('signArea').hidden = false; setMsg('signMsg', '', '');
-});
+  $('signArea').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+$('signRequestBtn').addEventListener('click', openSign);
+$('navSignBtn').addEventListener('click', openSign);
 $('consentChk').addEventListener('change', updateSignComplete);
 $('sigClearBtn').addEventListener('click', () => { sigPad.clear(); signaturePng = null; signatureMethod = null; updateSignComplete(); });
 $('sigPad').addEventListener('mouseup', () => { if (!sigPad.isEmpty()) { signaturePng = sigPad.toPngDataUrl(); signatureMethod = 'drawn'; } updateSignComplete(); });
@@ -256,8 +317,10 @@ $('sealBtn').addEventListener('click', async () => {
     if (r.sealedPdfBlob) {
       download(`${currentDocName.replace(/\.pdf$/i, '')}.gazegate-${r.sealId}.pdf`, r.sealedPdfBlob, 'application/pdf');
       setMsg('sealMsg', `봉인 발급됨 · ${r.sealId} · ${r.issuedAt}`, 'good');
+      $('sealBtn').closest('.left-section').classList.add('is-issued');
     } else {
       setMsg('sealMsg', `봉인 ID ${r.sealId} 생성 (PDF 스탬프 삽입은 단계 5에서 구현 예정 — 지금은 session.json에만 기록)`, 'warn');
+      $('sealBtn').closest('.left-section').classList.add('is-issued');
     }
     download(`session-${r.sealId}.json`, buildSessionJson());
     $('sealBtn').disabled = true;
@@ -274,5 +337,5 @@ $('dlEventsBtn').addEventListener('click', () => store && download('events.csv',
 $('dlSessionBtn').addEventListener('click', () => store && download(`session-${store.getSnapshot().seal?.sealId ?? store.getSnapshot().sessionId}.json`, buildSessionJson(), 'application/json'));
 
 // ---------- 유틸 ----------
-function setMsg(id, text, kind) { const el = $(id); el.textContent = text; el.className = `msg ${kind || ''}`; }
+function setMsg(id, text, kind) { const el = $(id); el.textContent = text; const base = id === 'viewerMsg' ? 'pane-msg' : 'note'; el.className = `${base} ${kind || ''}`; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
