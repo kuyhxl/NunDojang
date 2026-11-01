@@ -1,0 +1,14 @@
+# A — 박민서
+web/modules/eyeTracker.js           @A_GITHUB_ID
+web/modules/movementDetector.js     @A_GITHUB_ID
+web/dev/measurement.html            @A_GITHUB_ID
+web/dev/measurement.js              @A_GITHUB_ID
+docs/A_measurement.md               @A_GITHUB_ID
+
+# B — 이규태
+analysis/                           @dlrbxo
+docs/B_analysis.md                  @dlrbxo
+demo/demo-script.md                 @dlrbxo
+
+# C — 황찬혁 (기본 소유자)
+*                                   @kuyhxl

@@ -3,8 +3,8 @@
 웹캠으로 측정한 눈 움직임으로 PDF를 실제로 읽었는지 판별하고, 모든 페이지의 읽기 기준을 충족해야 동의·서명을 열어 주며, 그 기록과 서명을 봉인(Seal)으로 PDF에 남기는 웹사이트.
 
 - 과목: 디지털 헬스케어 인공지능 분석 실무 · 팀명: 내눈을바라봐
-- 공통 기준 문서: `docs/공통시작스크립트_v2.0.2.md` (계약 `gazegate-contract/1.1.0`)
-- 역할: `docs/roles.md`
+- 공통 기준 문서: `docs/common_script_v2.0.2.md` (계약 `gazegate-contract/1.1.0`)
+- 역할: `docs/roles.md` · Git 규칙: `docs/GIT_RULES.md`
 - 제출: 실무 보고서 11/12 · 포스터 11/15 · 교수님 데모 11/18 (localhost 시연, 배포 없음)
 
 ## 팀
