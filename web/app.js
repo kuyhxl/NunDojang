@@ -105,25 +105,38 @@ $('pageList').addEventListener('keydown', (e) => {
 $('nextBtn').addEventListener('click', () => goToPage(currentPage + 1));
 
 // 지면 위에서 스크롤하면 쪽 넘김. 지면 끝이 화면에 보일 때만 넘기고(그 전엔 평소처럼 스크롤),
-// 트랙패드 관성으로 여러 쪽이 한꺼번에 넘어가지 않게 한 번 넘긴 뒤 잠깐 쉰다.
-const WHEEL_TURN = 80;        // 이만큼 모이면 넘김 (마우스 휠 한 칸 ≈ 100)
-const WHEEL_COOLDOWN = 700;   // ms
-let wheelSum = 0, wheelLast = 0, wheelLockUntil = 0;
+// 트랙패드 관성(손을 뗀 뒤 줄어들며 이어지는 스크롤)으로는 한 쪽만 넘어가게 한다.
+// 새로 쓸어 넘기면(스크롤 세기가 다시 커지면) 관성이 끝나기를 기다리지 않고 바로 다음 쪽으로.
+const WHEEL_TURN = 40;        // 이만큼 모이면 넘김 (마우스 휠 한 칸 ≈ 100 → 한 칸에 바로 넘어감)
+const WHEEL_MIN_GAP = 220;    // ms. 트랙패드로 다시 쓸어 넘길 때 앞 넘김과의 최소 간격
+let wheelSum = 0, wheelLast = 0, wheelLocked = false, wheelTurnAt = 0, wheelPrevAbs = 0, wheelEvtAt = 0, wheelPrevGap = 1e9;
 document.querySelector('.page-frame').addEventListener('wheel', (e) => {
   if (!store || pageCount < 1 || e.ctrlKey) return;              // ctrl+휠 = 확대 → 건드리지 않음
-  const now = performance.now();
+  const now = e.timeStamp || performance.now();                  // 입력이 생긴 시각 (처리가 밀려도 간격이 흔들리지 않게)
+  const abs = Math.abs(e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+  // 새 손짓: 세기가 다시 커졌거나(트랙패드로 또 쓸어 넘김), 잠깐 끊겼다 다시 옴(마우스 휠 한 칸 더). 관성은 16ms 간격으로 줄어들며 이어진다
+  const swipe = abs > wheelPrevAbs * 1.5 && abs >= 8;                         // 트랙패드: 다시 세게
+  const gap = now - wheelEvtAt;
+  const notch = gap > 30 && wheelPrevGap > 25 && abs >= 30 && abs >= wheelPrevAbs;   // 마우스: 띄엄띄엄, 같은 세기 (관성은 16ms마다 줄어들며 온다)
+  wheelPrevAbs = abs; wheelEvtAt = now; wheelPrevGap = gap;
   const rect = e.currentTarget.getBoundingClientRect();
   const down = e.deltaY > 0;
   const edgeVisible = down ? rect.bottom <= window.innerHeight + 2 : rect.top >= 0;
   const canTurn = down ? currentPage < pageCount : currentPage > 1;
   if (!edgeVisible || !canTurn) { wheelSum = 0; return; }        // 아직 지면 안쪽을 스크롤 중이거나 첫/끝 쪽
   e.preventDefault();
-  if (now < wheelLockUntil) { wheelLockUntil = Math.max(wheelLockUntil, now + 150); return; }   // 관성이 이어지는 동안은 계속 잠금
+  // 넘긴 뒤에는 잠근다. 풀리는 때: 새 손짓이 왔을 때, 또는 스크롤이 180ms 넘게 멈췄다가 다시 시작할 때. 관성 꼬리로는 풀리지 않는다
+  if (wheelLocked) {
+    const quiet = gap > 180;
+    const gapOk = now - wheelTurnAt >= (notch || quiet ? 50 : WHEEL_MIN_GAP);   // 휠 한 칸마다 한 쪽, 트랙패드는 한 번 쓸 때마다 한 쪽
+    if (!((swipe || notch || quiet) && gapOk)) return;            // 관성 중
+    wheelLocked = false; wheelSum = 0;                            // 새 손짓 → 잠금 풀기
+  }
   if (now - wheelLast > 250 || Math.sign(wheelSum) !== Math.sign(e.deltaY)) wheelSum = 0;
   wheelLast = now;
   wheelSum += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;       // 줄 단위 휠은 px로
   if (Math.abs(wheelSum) >= WHEEL_TURN) {
-    wheelSum = 0; wheelLockUntil = now + WHEEL_COOLDOWN;
+    wheelSum = 0; wheelTurnAt = now; wheelLocked = true;
     goToPage(currentPage + (down ? 1 : -1));
     // 창이 작아 지면이 잘려 있으면: 다음 쪽은 첫 줄부터, 이전 쪽은 마지막 줄부터 보이게
     const frame = e.currentTarget, stickyH = document.querySelector('.pane-sticky')?.offsetHeight ?? 0;
