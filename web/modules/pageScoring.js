@@ -1,5 +1,8 @@
 // 페이지 점수 정책 — C 소유. DOM·카메라를 쓰지 않는 순수 함수.
-// 정책: count-over-lines/0.1.0. 분모를 lineCount-1로 바꾸는 등의 변경은 정책 버전을 올리고 공통 변경 제안으로.
+// 정책: count-over-sweeps/0.2.0 (2026-11-04, docs/decisions.md)
+//   L줄을 끝까지 읽으면 줄바꿈은 L−1번 → 점수 = 수락된 줄바꿈 후보 수 / (L−1) × 100
+//   (0.1.0은 분모가 L이라 10줄을 다 읽어도 9/10 = 90%였다)
+//   한 줄짜리 쪽(L=1)은 기대 줄바꿈이 0이므로 사건 대신 유효 측정 시간·품질로만 판정한다.
 import { PAGE_STATUS, REASON_CODES } from './contracts.js';
 
 /**
@@ -29,7 +32,10 @@ export function evaluatePage(pageState, config) {
     return { ...base, status: PAGE_STATUS.UNSUPPORTED, reasonCodes: [REASON_CODES.UNSUPPORTED_PAGE] };
   }
 
-  const rawScore = (acceptedEventCount / lineCount) * 100; // 반올림하지 않음
+  const expectedSweeps = expectedReturnSweeps(lineCount);
+  const rawScore = expectedSweeps > 0
+    ? (acceptedEventCount / expectedSweeps) * 100            // 반올림하지 않음
+    : (activeMs > 0 ? 100 : 0);                              // 한 줄짜리 쪽: 아래 품질 조건만으로 판정
   const displayScore = Math.min(config.maxDisplayScore, Math.max(0, rawScore));
 
   // 2) 미측정
@@ -51,8 +57,13 @@ export function evaluatePage(pageState, config) {
     return { ...base, rawScore, displayScore, passed: true, status: PAGE_STATUS.PASSED, reasonCodes: [] };
   }
   reasonCodes.push(REASON_CODES.SCORE_BELOW_THRESHOLD);
-  if (acceptedEventCount === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);
+  if (acceptedEventCount === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);   // L=1이면 여기까지 오지 않는다 (rawScore 100)
   return { ...base, rawScore, displayScore, passed: false, status: PAGE_STATUS.NOT_PASSED, reasonCodes };
+}
+
+/** L줄 쪽을 끝까지 읽을 때 기대하는 줄바꿈 수 (L−1, 최소 0). 화면 표시와 점수가 같은 값을 쓰도록 여기 하나만 둔다. */
+export function expectedReturnSweeps(lineCount) {
+  return Number.isInteger(lineCount) && lineCount > 0 ? lineCount - 1 : 0;
 }
 
 /** 입력이 계약 범위를 벗어나면 이유 문자열, 정상이면 null. 조용히 보정하지 않는다. */

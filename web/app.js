@@ -9,7 +9,7 @@ import { createSessionStore } from './modules/sessionStore.js';
 import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './modules/signature.js';
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
-import { formatScore } from './modules/pageScoring.js';
+import { formatScore, expectedReturnSweeps } from './modules/pageScoring.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 
 const $ = (id) => document.getElementById(id);
@@ -304,7 +304,7 @@ function renderPanel() {
   if (!p) return;
   const ev = p.evaluation;
   $('lineCount').textContent = p.lineCount ?? `– (${p.unsupportedReason ?? '미지원'})`;
-  $('eventCount').textContent = p.acceptedEventCount;
+  $('eventCount').textContent = p.lineCount ? `${p.acceptedEventCount} / ${expectedReturnSweeps(p.lineCount)}` : p.acceptedEventCount;   // 수락된 후보 / 기대 줄바꿈
   $('pageScore').textContent = formatScore(ev);
   $('validTime').textContent = `${(p.validMs / 1000).toFixed(1)}s / ${(p.activeMs / 1000).toFixed(1)}s (${Math.round(ev.validRatio * 100)}%)`;
   $('blinkCount').textContent = p.blinkCount ?? '미설정';
