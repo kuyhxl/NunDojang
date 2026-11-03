@@ -1,9 +1,9 @@
 # A — 박민서
-web/modules/eyeTracker.js           @A_GITHUB_ID
-web/modules/movementDetector.js     @A_GITHUB_ID
-web/dev/measurement.html            @A_GITHUB_ID
-web/dev/measurement.js              @A_GITHUB_ID
-docs/A_measurement.md               @A_GITHUB_ID
+web/modules/eyeTracker.js           @hyebhz
+web/modules/movementDetector.js     @hyebhz
+web/dev/measurement.html            @hyebhz
+web/dev/measurement.js              @hyebhz
+docs/A_measurement.md               @hyebhz
 
 # B — 이규태
 analysis/                           @dlrbxo
