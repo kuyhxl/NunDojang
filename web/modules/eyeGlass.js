@@ -12,7 +12,8 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   const drop = container.querySelector('.drop');
   const note = container.querySelector('.gaze-note');
 
-  let lines = [];          // [{top, height}] 캔버스 픽셀
+  let lines = [];          // [{top, height, left?, width?}] 지면(CSS) 픽셀
+  let span = { left: 0.14, width: 0.72 };   // 물방울이 가로로 움직이는 범위 (지면 폭 비율). 재배치 모드는 본문 단에 맞춘다
   let lineIndex = 0;
   let directionSign = 1;
   let earBase = null;
@@ -59,7 +60,12 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   }
 
   return {
-    setLines(boxes) { lines = Array.isArray(boxes) ? boxes : []; lineIndex = 0; target.y = lineY(0); kick(); },
+    setLines(boxes) {
+      lines = Array.isArray(boxes) ? boxes : []; lineIndex = 0;
+      const W = container.clientWidth || 1, b = lines[0];
+      span = b && Number.isFinite(b.left) && Number.isFinite(b.width) ? { left: b.left / W, width: b.width / W } : { left: 0.14, width: 0.72 };
+      target.y = lineY(0); kick();
+    },
     setDirectionSign(s) { directionSign = s === -1 ? -1 : 1; },
     advance(n = 1) { lineIndex = Math.min(lineIndex + n, Math.max(lines.length - 1, 0)); target.y = lineY(lineIndex); kick(); },
     resetLine() { lineIndex = 0; target.y = lineY(0); kick(); },
@@ -69,7 +75,7 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
       setFog(false, '');
       const x = (sample.leftIrisX + sample.rightIrisX) / 2;
       const screenX = directionSign === 1 ? x : 1 - x;
-      target.x = 0.14 + Math.min(1, Math.max(0, (screenX - 0.3) / 0.4)) * 0.72;
+      target.x = span.left + Math.min(1, Math.max(0, (screenX - 0.3) / 0.4)) * span.width;
       const ear = sample.leftEar !== null && sample.rightEar !== null ? (sample.leftEar + sample.rightEar) / 2 : null;
       drop.style.setProperty('--close', closure(ear).toFixed(2));
       kick();

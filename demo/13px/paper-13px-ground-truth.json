@@ -2,19 +2,21 @@
   "file": "paper-13px.pdf",
   "source": "../paper.pdf",
   "title": "웹캠 기반 줄바꿈 안구 운동 검출을 이용한 문서 정독 확인",
+  "reflowVersion": "reflow-13px/0.1.0",
   "layout": {
     "fontPx": 13,
     "lineHeightPx": 26,
-    "columnWidthPx": 520,
+    "columnPx": 520,
     "linesPerPage": 12,
-    "note": "100% 배율에서 13px. 앱이 페이지를 화면 폭에 맞춰 키우면 실제 픽셀은 달라진다"
+    "note": "100% 배율에서 13px. 앱에서 원본 PDF를 열어도 이 줄 나눔과 같다 (같은 재배치 코드·같은 글꼴)"
   },
-  "rule": "제목·표 행·코드 줄을 포함한 모든 텍스트 줄. 쪽 번호 제외. 재배치 스크립트가 줄을 직접 배치했으므로 정답",
+  "rule": "앱(web/modules/reflow.js)이 원본에서 만든 줄 그대로. 제목·표 행·코드 줄 포함, 쪽 번호·그림 자리 제외 (figures = 그 쪽의 그림 자리 수)",
   "pages": [
     {
       "pageId": 1,
       "lineCount": 12,
       "expectedReturnSweeps": 11,
+      "figures": 0,
       "lines": [
         "디지털 헬스케어 인공지능 분석 실무 · 프로젝트 보고서 초안 2026. 11",
         "웹캠 기반 줄바꿈 안구 운동 검출을 이용한",
@@ -34,6 +36,7 @@
       "pageId": 2,
       "lineCount": 12,
       "expectedReturnSweeps": 11,
+      "figures": 0,
       "lines": [
         "의한 오검출과 그 대응 방향을 함께 논의한다.",
         "주제어 안구 운동, 웹캠, 줄바꿈 검출, 정독 확인, MediaPipe",
@@ -53,45 +56,51 @@
       "pageId": 3,
       "lineCount": 12,
       "expectedReturnSweeps": 11,
+      "figures": 0,
       "lines": [
         "구분하였고, Kelton 등[2]은 뉴스 기사를 정독 또는 훑어보도록 지시한 실험 자료로 영역 단위",
         "분류기를 학습하였다. 두 연구 모두 적외선 시선 추적기를 사용하였다. Ribeiro 등[3]은 웹캠으로",
         "수집한 다국어 독해 시선 데이터셋을 공개하며 상용 장비와 중간 이상의 상관을 보고하였다. 본",
         "연구는 시선 좌표 대신 줄 단위 리듬에 집중한다는 점에서 이들과 다르다.",
         "3. 제안 방법",
-        "3.1 신호 추출 MediaPipe Face Landmarker로 매 프레임 얼굴 랜드마크를 얻고, 각 눈에서 홍채",
-        "중심이 눈 양끝 사이 어디에 있는지를 0~1의 상대 좌표로 계산한다. 얼굴이 검출되지 않거나 눈을",
-        "감은 프레임은 무효로 표시한다. 상대 좌표는 눈 크기로 정규화되므로 웹캠과의 거리가 달라져도",
-        "값의 범위가 크게 변하지 않는다.",
-        "3.2 줄바꿈 후보 검출 상대 좌표가 짧은 시간 안에 일정 폭 이상 왼쪽으로 이동하면 줄바꿈 후보로",
-        "센다. 최소 이동 폭, 지속 시간, 연속 검출 사이의 최소 간격을 설정값으로 두며, 무효 프레임이나",
-        "페이지 전환이 끼면 검출 이력을 끊는다."
+        "3.1 신호 추출",
+        "MediaPipe Face Landmarker로 매 프레임 얼굴 랜드마크를 얻고, 각 눈에서 홍채 중심이 눈 양끝",
+        "사이 어디에 있는지를 0~1의 상대 좌표로 계산한다. 얼굴이 검출되지 않거나 눈을 감은 프레임은",
+        "무효로 표시한다. 상대 좌표는 눈 크기로 정규화되므로 웹캠과의 거리가 달라져도 값의 범위가 크게",
+        "변하지 않는다.",
+        "3.2 줄바꿈 후보 검출",
+        "상대 좌표가 짧은 시간 안에 일정 폭 이상 왼쪽으로 이동하면 줄바꿈 후보로 센다. 최소 이동 폭,"
       ]
     },
     {
       "pageId": 4,
       "lineCount": 12,
       "expectedReturnSweeps": 11,
+      "figures": 0,
       "lines": [
-        "3.3 페이지 점수 본문이 L줄인 페이지에서 끝까지 읽었다면 줄바꿈은 L−1회 나타난다. 수락된",
-        "줄바꿈 후보 수를 N이라 할 때 페이지 점수 S는 다음과 같다.",
+        "지속 시간, 연속 검출 사이의 최소 간격을 설정값으로 두며, 무효 프레임이나 페이지 전환이 끼면",
+        "검출 이력을 끊는다.",
+        "3.3 페이지 점수",
+        "본문이 L줄인 페이지에서 끝까지 읽었다면 줄바꿈은 L−1회 나타난다. 수락된 줄바꿈 후보 수를",
+        "N이라 할 때 페이지 점수 S는 다음과 같다.",
         "S = min(100, 100 · N / (L − 1))",
         "모든 페이지의 S가 80 이상이고 유효 측정 시간이 충분할 때에만 서명을 허용한다.",
         "4. 예비 실험",
         "팀원 1인이 13포인트 10줄 본문을 웹캠과 가까운 거리, 약 60cm, 먼 거리에서 각각 읽었다. 결과는",
         "표 1과 같다.",
-        "거리 본문 줄 수 기대 줄바꿈 검출",
-        "가까이 10 9 9",
-        "약 60cm 10 9 9",
-        "멀리 10 9 9",
-        "표 1. 거리별 줄바꿈 검출 결과 (참가자 1인, 거리당 1회)"
+        "거리 │ 본문 줄 수 │ 기대 줄바꿈 │ 검출",
+        "가까이 │ 10 │ 9 │ 9"
       ]
     },
     {
       "pageId": 5,
       "lineCount": 12,
       "expectedReturnSweeps": 11,
+      "figures": 0,
       "lines": [
+        "약 60cm │ 10 │ 9 │ 9",
+        "멀리 │ 10 │ 9 │ 9",
+        "표 1. 거리별 줄바꿈 검출 결과 (참가자 1인, 거리당 1회)",
         "참가자와 반복 횟수가 적어 일반화할 수는 없으나, 30fps 웹캠에서도 줄 단위 이동이 랜드마크",
         "떨림과 구분될 수 있음을 확인하였다.",
         "5. 한계 및 향후 과제",
@@ -100,17 +109,18 @@
         "배치하는 방식으로 대응할 계획이다. 또한 이 시스템은 읽기 행위를 기록할 뿐 내용 이해를 판단하지",
         "않는다.",
         "참고문헌",
-        "[1] R. Biedert, J. Hees, A. Dengel, G. Buscher, “A Robust Realtime Reading-Skimming",
-        "Classifier,” Proc. ETRA, pp. 123–130, 2012.",
-        "[2] C. Kelton, Z. Wei, S. Ahn, et al., “Reading Detection in Real-time,” Proc. ETRA, 2019.",
-        "[3] T. Ribeiro, S. Brandl, A. Søgaard, N. Hollenstein, “WebQAmGaze: A Multilingual"
+        "[1] R. Biedert, J. Hees, A. Dengel, G. Buscher, “A Robust Realtime Reading-Skimming"
       ]
     },
     {
       "pageId": 6,
-      "lineCount": 4,
-      "expectedReturnSweeps": 3,
+      "lineCount": 7,
+      "expectedReturnSweeps": 6,
+      "figures": 0,
       "lines": [
+        "Classifier,” Proc. ETRA, pp. 123–130, 2012.",
+        "[2] C. Kelton, Z. Wei, S. Ahn, et al., “Reading Detection in Real-time,” Proc. ETRA, 2019.",
+        "[3] T. Ribeiro, S. Brandl, A. Søgaard, N. Hollenstein, “WebQAmGaze: A Multilingual",
         "Webcam Eye-Tracking-While-Reading Dataset,” arXiv:2303.17876, 2023.",
         "[4] S. Ahn, C. Kelton, A. Balasubramanian, G. Zelinsky, “Towards Predicting Reading",
         "Comprehension From Gaze Behavior,” Proc. ETRA, 2020.",

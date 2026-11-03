@@ -16,6 +16,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   maxDisplayScore: 100,
   modelRuntimeEnabled: false,
   validationLevel: 'pilot',
+  viewMode: 'reflow',            // 'reflow' = 13px 한 단 재배치(기본, 11/3 결정) · 'original' = 원본 그대로(비교용)
+  reflowFontPath: './vendor/fonts/NotoSansKR-Regular.ttf',  // 재배치 글꼴. demo/13px PDF와 같은 글꼴이라 줄 나눔이 같다
   mediaPipeWasmPath: './vendor/mediapipe/wasm',
   faceModelPath: './models/face_landmarker.task',
   pdfWorkerPath: './vendor/pdfjs/pdf.worker.mjs',
@@ -58,6 +60,7 @@ export function resolveAssetUrls(config = DEFAULT_CONFIG) {
     pdfCMapUrl: new URL(config.pdfCMapPath, webBaseUrl).href,
     pdfStandardFontUrl: new URL(config.pdfStandardFontPath, webBaseUrl).href,
     sealFontUrl: new URL(config.sealFontPath, webBaseUrl).href,
+    reflowFontUrl: new URL(config.reflowFontPath, webBaseUrl).href,
     pdfjsModuleUrl: new URL('./vendor/pdfjs/pdf.mjs', webBaseUrl).href,
     mediapipeModuleUrl: new URL('./vendor/mediapipe/vision_bundle.mjs', webBaseUrl).href,
     pdfLibModuleUrl: new URL('./vendor/pdf-lib/pdf-lib.esm.min.js', webBaseUrl).href

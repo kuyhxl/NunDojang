@@ -49,6 +49,7 @@ if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden 
 (async () => {
   try {
     pdf = await createPdfManager({ canvasElement: $('pdfCanvas'), config });
+    document.body.classList.toggle('is-reflow', pdf.mode === 'reflow');
   } catch (e) {
     setMsg('viewerMsg', e.message, 'bad');
   }
@@ -60,10 +61,11 @@ async function openPdfFile(file) {
   if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { setMsg('viewerMsg', 'PDF 파일만 열 수 있습니다.', 'bad'); return; }
   await closeDocument();
   try {
-    const { pageCount: n } = await pdf.open(file);
+    if (pdf.mode === 'reflow') setMsg('viewerMsg', '텍스트를 뽑아 13px로 다시 배치하는 중…', '');
+    const { pageCount: n, sourcePageCount } = await pdf.open(file);
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · 13px` : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
@@ -71,9 +73,10 @@ async function openPdfFile(file) {
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
+    document.body.classList.remove('is-empty');   // 지면을 먼저 보이게 해야 폭·높이를 재서 그릴 수 있다
     await goToPage(1);
     setMsg('viewerMsg', '', '');
-    document.body.classList.remove('is-empty');
+    checkZoom();
     setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
@@ -90,7 +93,59 @@ for (const el of [$('dropZone'), document.querySelector('.pane')]) {
 }
 
 $('prevBtn').addEventListener('click', () => goToPage(currentPage - 1));
+// 왼쪽 '페이지' 목록에서 쪽을 누르면 그 쪽으로 (목록은 다시 그려지므로 ol에 한 번만 건다)
+const pageFromList = (e) => Number(e.target.closest('li[data-page]')?.dataset.page);
+$('pageList').addEventListener('click', (e) => { const n = pageFromList(e); if (n && n !== currentPage) goToPage(n); });
+$('pageList').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const n = pageFromList(e); if (!n) return;
+  e.preventDefault();
+  if (n !== currentPage) goToPage(n).then(() => $('pageList').querySelector(`li[data-page="${n}"]`)?.focus());  // 다시 그려진 목록에서 포커스 유지
+});
 $('nextBtn').addEventListener('click', () => goToPage(currentPage + 1));
+
+// 지면 위에서 스크롤하면 쪽 넘김. 지면 끝이 화면에 보일 때만 넘기고(그 전엔 평소처럼 스크롤),
+// 트랙패드 관성(손을 뗀 뒤 줄어들며 이어지는 스크롤)으로는 한 쪽만 넘어가게 한다.
+// 새로 쓸어 넘기면(스크롤 세기가 다시 커지면) 관성이 끝나기를 기다리지 않고 바로 다음 쪽으로.
+const WHEEL_TURN = 40;        // 이만큼 모이면 넘김 (마우스 휠 한 칸 ≈ 100 → 한 칸에 바로 넘어감)
+const WHEEL_MIN_GAP = 220;    // ms. 트랙패드로 다시 쓸어 넘길 때 앞 넘김과의 최소 간격
+let wheelSum = 0, wheelLast = 0, wheelLocked = false, wheelTurnAt = 0, wheelPrevAbs = 0, wheelEvtAt = 0, wheelPrevGap = 1e9;
+document.querySelector('.page-frame').addEventListener('wheel', (e) => {
+  if (!store || pageCount < 1 || e.ctrlKey) return;              // ctrl+휠 = 확대 → 건드리지 않음
+  const now = e.timeStamp || performance.now();                  // 입력이 생긴 시각 (처리가 밀려도 간격이 흔들리지 않게)
+  const abs = Math.abs(e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+  // 새 손짓: 세기가 다시 커졌거나(트랙패드로 또 쓸어 넘김), 잠깐 끊겼다 다시 옴(마우스 휠 한 칸 더). 관성은 16ms 간격으로 줄어들며 이어진다
+  const swipe = abs > wheelPrevAbs * 1.5 && abs >= 8;                         // 트랙패드: 다시 세게
+  const gap = now - wheelEvtAt;
+  const notch = gap > 30 && wheelPrevGap > 25 && abs >= 30 && abs >= wheelPrevAbs;   // 마우스: 띄엄띄엄, 같은 세기 (관성은 16ms마다 줄어들며 온다)
+  wheelPrevAbs = abs; wheelEvtAt = now; wheelPrevGap = gap;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const down = e.deltaY > 0;
+  const edgeVisible = down ? rect.bottom <= window.innerHeight + 2 : rect.top >= 0;
+  const canTurn = down ? currentPage < pageCount : currentPage > 1;
+  if (!edgeVisible || !canTurn) { wheelSum = 0; return; }        // 아직 지면 안쪽을 스크롤 중이거나 첫/끝 쪽
+  e.preventDefault();
+  // 넘긴 뒤에는 잠근다. 풀리는 때: 새 손짓이 왔을 때, 또는 스크롤이 180ms 넘게 멈췄다가 다시 시작할 때. 관성 꼬리로는 풀리지 않는다
+  if (wheelLocked) {
+    const quiet = gap > 180;
+    const gapOk = now - wheelTurnAt >= (notch || quiet ? 50 : WHEEL_MIN_GAP);   // 휠 한 칸마다 한 쪽, 트랙패드는 한 번 쓸 때마다 한 쪽
+    if (!((swipe || notch || quiet) && gapOk)) return;            // 관성 중
+    wheelLocked = false; wheelSum = 0;                            // 새 손짓 → 잠금 풀기
+  }
+  if (now - wheelLast > 250 || Math.sign(wheelSum) !== Math.sign(e.deltaY)) wheelSum = 0;
+  wheelLast = now;
+  wheelSum += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;       // 줄 단위 휠은 px로
+  if (Math.abs(wheelSum) >= WHEEL_TURN) {
+    wheelSum = 0; wheelTurnAt = now; wheelLocked = true;
+    goToPage(currentPage + (down ? 1 : -1));
+    // 창이 작아 지면이 잘려 있으면: 다음 쪽은 첫 줄부터, 이전 쪽은 마지막 줄부터 보이게
+    const frame = e.currentTarget, stickyH = document.querySelector('.pane-sticky')?.offsetHeight ?? 0;
+    const r = frame.getBoundingClientRect();
+    if (r.height + stickyH > window.innerHeight) {
+      window.scrollBy({ top: down ? r.top - stickyH - 8 : r.bottom - window.innerHeight, behavior: 'instant' });
+    }
+  }
+}, { passive: false });
 
 async function goToPage(pageId) {
   if (!store || pageId < 1 || pageId > pageCount) return;
@@ -139,7 +194,25 @@ function endSegment(reason) {
   segmentOpen = false;
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { endSegment('tab_hidden'); setMsg('viewerMsg', '탭이 숨겨져 측정을 일시정지했습니다. "측정 재개"를 누르세요.', 'warn'); measuring = false; updateMeasureBtn(); } });
-window.addEventListener('resize', () => { if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); } });
+window.addEventListener('resize', () => { checkZoom(); if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); } });
+
+// ---------- 배율 확인: 13px은 브라우저 배율 100%에서만 13px이다 ----------
+function zoomLooksOff() {
+  const vv = window.visualViewport;
+  if (vv && vv.scale > 1.01) return true;                                  // 트랙패드로 확대
+  if (!(window.outerWidth > 0 && window.innerWidth > 0)) return false;
+  return Math.abs(window.outerWidth / window.innerWidth - 1) > 0.08;       // ⌘+/⌘− 배율 (개발자 도구를 옆에 붙이면 잘못 알릴 수 있음)
+}
+function checkZoom() {
+  if (pdf?.mode !== 'reflow' || !store) return;
+  const off = zoomLooksOff();
+  if (off) setMsg('viewerMsg', '브라우저 배율이 100%가 아닌 것 같습니다. 글자가 13px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.', 'warn');
+  else if ($('viewerMsg').textContent.startsWith('브라우저 배율')) setMsg('viewerMsg', '', '');
+}
+window.visualViewport?.addEventListener('resize', checkZoom);
+
+// 개발·시험용: 재배치 결과를 콘솔에서 확인 (window.nundojang.reflow())
+window.nundojang = { reflow: () => pdf?.getReflow?.() ?? null };
 
 // ---------- 카메라·측정 ----------
 $('camStartBtn').addEventListener('click', async () => {
@@ -207,14 +280,16 @@ $('searchInput').addEventListener('keydown', async (e) => {
 });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
 
-// ---------- 진행선: 문서 전체 대비 현재 위치 (페이지 + 페이지 안 스크롤) ----------
+// ---------- 진행선: 문서 안 현재 위치. 첫 쪽 = 왼쪽 끝(0%), 마지막 쪽 = 오른쪽 끝(100%) ----------
 function updateProgress() {
   if (!pageCount) { $('progressDot').style.left = '0%'; return; }
-  const frame = $('pdfCanvas').parentElement;
-  const rect = frame.getBoundingClientRect();
-  const visible = Math.min(1, Math.max(0, (window.innerHeight - rect.top) / Math.max(rect.height, 1)));
-  const inPage = pageCount === 1 ? visible : visible; // 페이지 안 스크롤 비율
-  const pct = ((currentPage - 1) + inPage) / pageCount * 100;
+  let pct;
+  if (pageCount > 1) pct = (currentPage - 1) / (pageCount - 1) * 100;
+  else {   // 한 쪽짜리: 지면을 스크롤한 만큼 (위 0% → 끝까지 내리면 100%)
+    const rect = $('pdfCanvas').parentElement.getBoundingClientRect();
+    const scrollable = rect.height - window.innerHeight;
+    pct = scrollable > 0 ? (-rect.top / scrollable) * 100 : 0;
+  }
   $('progressDot').style.left = `${Math.min(100, Math.max(0, pct)).toFixed(2)}%`;
 }
 window.addEventListener('scroll', () => requestAnimationFrame(updateProgress), { passive: true });
@@ -237,9 +312,12 @@ function renderPanel() {
   $('pageStatus').className = `st-${ev.status}`;
 
   const snap = store.getSnapshot();
-  $('pageList').innerHTML = snap.pages.map((pg) => {
+  $('pageList').innerHTML = snap.pages.map((pg, i) => {
+    const id = i + 1, cur = id === currentPage ? ' current' : '', aria = id === currentPage ? ' aria-current="page"' : '';
+    const attrs = `data-page="${id}" tabindex="0" role="button"${aria}`;   // 누르면 그 쪽으로 이동
+    if (!pg) return `<li class="st-unmeasured${cur}" ${attrs} title="${id}쪽으로 이동"><span>${id}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
     const e = pg.evaluation;
-    return `<li class="st-${e.status} ${pg.pageId === currentPage ? 'current' : ''}" title="${statusText(e)}"><span>${pg.pageId}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
+    return `<li class="st-${e.status}${cur}" ${attrs} title="${statusText(e)} · ${id}쪽으로 이동"><span>${id}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');
   $('signRequestBtn').disabled = !snap.canSign;
   $('navSignBtn').disabled = !snap.canSign;
