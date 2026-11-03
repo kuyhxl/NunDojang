@@ -49,6 +49,7 @@ if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden 
 (async () => {
   try {
     pdf = await createPdfManager({ canvasElement: $('pdfCanvas'), config });
+    document.body.classList.toggle('is-reflow', pdf.mode === 'reflow');
   } catch (e) {
     setMsg('viewerMsg', e.message, 'bad');
   }
@@ -60,10 +61,11 @@ async function openPdfFile(file) {
   if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { setMsg('viewerMsg', 'PDF 파일만 열 수 있습니다.', 'bad'); return; }
   await closeDocument();
   try {
-    const { pageCount: n } = await pdf.open(file);
+    if (pdf.mode === 'reflow') setMsg('viewerMsg', '텍스트를 뽑아 13px로 다시 배치하는 중…', '');
+    const { pageCount: n, sourcePageCount } = await pdf.open(file);
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · 13px` : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
@@ -71,9 +73,10 @@ async function openPdfFile(file) {
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
+    document.body.classList.remove('is-empty');   // 지면을 먼저 보이게 해야 폭·높이를 재서 그릴 수 있다
     await goToPage(1);
     setMsg('viewerMsg', '', '');
-    document.body.classList.remove('is-empty');
+    checkZoom();
     setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
@@ -139,7 +142,25 @@ function endSegment(reason) {
   segmentOpen = false;
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { endSegment('tab_hidden'); setMsg('viewerMsg', '탭이 숨겨져 측정을 일시정지했습니다. "측정 재개"를 누르세요.', 'warn'); measuring = false; updateMeasureBtn(); } });
-window.addEventListener('resize', () => { if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); } });
+window.addEventListener('resize', () => { checkZoom(); if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); } });
+
+// ---------- 배율 확인: 13px은 브라우저 배율 100%에서만 13px이다 ----------
+function zoomLooksOff() {
+  const vv = window.visualViewport;
+  if (vv && vv.scale > 1.01) return true;                                  // 트랙패드로 확대
+  if (!(window.outerWidth > 0 && window.innerWidth > 0)) return false;
+  return Math.abs(window.outerWidth / window.innerWidth - 1) > 0.08;       // ⌘+/⌘− 배율 (개발자 도구를 옆에 붙이면 잘못 알릴 수 있음)
+}
+function checkZoom() {
+  if (pdf?.mode !== 'reflow' || !store) return;
+  const off = zoomLooksOff();
+  if (off) setMsg('viewerMsg', '브라우저 배율이 100%가 아닌 것 같습니다. 글자가 13px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.', 'warn');
+  else if ($('viewerMsg').textContent.startsWith('브라우저 배율')) setMsg('viewerMsg', '', '');
+}
+window.visualViewport?.addEventListener('resize', checkZoom);
+
+// 개발·시험용: 재배치 결과를 콘솔에서 확인 (window.nundojang.reflow())
+window.nundojang = { reflow: () => pdf?.getReflow?.() ?? null };
 
 // ---------- 카메라·측정 ----------
 $('camStartBtn').addEventListener('click', async () => {
@@ -207,14 +228,16 @@ $('searchInput').addEventListener('keydown', async (e) => {
 });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
 
-// ---------- 진행선: 문서 전체 대비 현재 위치 (페이지 + 페이지 안 스크롤) ----------
+// ---------- 진행선: 문서 안 현재 위치. 첫 쪽 = 왼쪽 끝(0%), 마지막 쪽 = 오른쪽 끝(100%) ----------
 function updateProgress() {
   if (!pageCount) { $('progressDot').style.left = '0%'; return; }
-  const frame = $('pdfCanvas').parentElement;
-  const rect = frame.getBoundingClientRect();
-  const visible = Math.min(1, Math.max(0, (window.innerHeight - rect.top) / Math.max(rect.height, 1)));
-  const inPage = pageCount === 1 ? visible : visible; // 페이지 안 스크롤 비율
-  const pct = ((currentPage - 1) + inPage) / pageCount * 100;
+  let pct;
+  if (pageCount > 1) pct = (currentPage - 1) / (pageCount - 1) * 100;
+  else {   // 한 쪽짜리: 지면을 스크롤한 만큼 (위 0% → 끝까지 내리면 100%)
+    const rect = $('pdfCanvas').parentElement.getBoundingClientRect();
+    const scrollable = rect.height - window.innerHeight;
+    pct = scrollable > 0 ? (-rect.top / scrollable) * 100 : 0;
+  }
   $('progressDot').style.left = `${Math.min(100, Math.max(0, pct)).toFixed(2)}%`;
 }
 window.addEventListener('scroll', () => requestAnimationFrame(updateProgress), { passive: true });
@@ -237,7 +260,8 @@ function renderPanel() {
   $('pageStatus').className = `st-${ev.status}`;
 
   const snap = store.getSnapshot();
-  $('pageList').innerHTML = snap.pages.map((pg) => {
+  $('pageList').innerHTML = snap.pages.map((pg, i) => {
+    if (!pg) return `<li class="st-unmeasured"><span>${i + 1}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
     const e = pg.evaluation;
     return `<li class="st-${e.status} ${pg.pageId === currentPage ? 'current' : ''}" title="${statusText(e)}"><span>${pg.pageId}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');

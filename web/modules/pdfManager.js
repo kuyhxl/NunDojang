@@ -1,12 +1,19 @@
 // PDF 표시·줄 수 계산 — C 소유.
 // 계약: createPdfManager({canvasElement, config}) → {open(file) → {pageCount}, renderPage(pageId) → {pageId,lineCount,supported,unsupportedReason}, close()}
-// 뼈대 상태: PDF.js 자산이 있으면 표시·줄 수 추정을 시도하고, 없으면 명확한 오류를 낸다.
+//
+// 보기 방식 (config.viewMode)
+//  'reflow'  (기본) 텍스트를 뽑아 13px 한 단으로 다시 배치한다. pageId·pageCount는 재배치된 쪽 기준(쪽당 12줄).
+//            줄 수는 앱이 직접 배치한 값이라 추정이 아니다. 11/3 회의 결정.
+//  'original' 원본 그대로 그리고 줄 수는 텍스트 y 좌표로 추정한다 (예전 방식, 비교·디버그용).
 import { resolveAssetUrls } from './config.js';
+import { REFLOW, reflowDocument, loadReflowFont, createMeasure, drawPage } from './reflow.js';
 
 export async function createPdfManager({ canvasElement, config }) {
   const urls = resolveAssetUrls(config);
+  const mode = config.viewMode === 'original' ? 'original' : 'reflow';
   let pdfjs = null;
   let doc = null;
+  let reflowed = null;     // {pages: [[{kind,text}]], sourcePages}
   let renderSeq = 0;
 
   try {
@@ -25,17 +32,33 @@ export async function createPdfManager({ canvasElement, config }) {
     } catch (e) {
       throw Object.assign(new Error('PDF를 열 수 없습니다 (암호·손상 가능).'), { code: 'pdf_open_failed', cause: e, recoverable: true });
     }
-    return { pageCount: doc.numPages };
+    if (mode === 'original') return { pageCount: doc.numPages, sourcePageCount: doc.numPages, mode };
+
+    await loadReflowFont(urls.reflowFontUrl);
+    reflowed = await reflowDocument(doc, createMeasure());
+    if (reflowed.pages.length === 0) {
+      await close();
+      throw Object.assign(new Error('이 PDF에서 텍스트를 찾지 못했습니다. 스캔한 이미지 PDF는 다시 배치할 수 없습니다.'), { code: 'pdf_no_text', recoverable: true });
+    }
+    return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode };
   }
 
   async function renderPage(pageId) {
     if (!doc) throw new Error('no document');
     const mySeq = ++renderSeq;
+    if (mode === 'reflow') {
+      const lines = reflowed.pages[pageId - 1];
+      if (!lines) throw new Error(`no page ${pageId}`);
+      const lineBoxes = drawPage(canvasElement, lines);
+      return { pageId, lineCount: lines.length, supported: true, unsupportedReason: null, lineBoxes };
+    }
+
     const page = await doc.getPage(pageId);
     // 한 페이지 전체가 보이도록 캔버스 폭에 맞춘다 (스크롤 없음)
     const unscaled = page.getViewport({ scale: 1 });
     const scale = canvasElement.clientWidth > 0 ? canvasElement.clientWidth / unscaled.width : 1;
     const viewport = page.getViewport({ scale });
+    canvasElement.style.width = ''; canvasElement.style.height = '';
     canvasElement.width = Math.floor(viewport.width);
     canvasElement.height = Math.floor(viewport.height);
     const task = page.render({ canvasContext: canvasElement.getContext('2d'), viewport });
@@ -47,9 +70,8 @@ export async function createPdfManager({ canvasElement, config }) {
   }
 
   /**
-   * 본문 줄 수 추정: 텍스트 조각의 y 좌표를 묶어 줄로 센다.
-   * 1차 규칙: 같은 줄 = y 차이가 글자 높이의 절반 이하. 머리말·꼬리말 제외 규칙은 아직 없음 (사람 대조 필요).
-   * demo/reading-demo-ground-truth.json과 반드시 대조한다.
+   * (original 모드) 본문 줄 수 추정: 텍스트 조각의 y 좌표를 묶어 줄로 센다.
+   * 같은 줄 = y 차이가 글자 높이의 절반 이하. 머리말·꼬리말·2단을 구분하지 못한다.
    */
   async function estimateLineCount(page, viewport) {
     const content = await page.getTextContent();
@@ -63,24 +85,29 @@ export async function createPdfManager({ canvasElement, config }) {
       rows.push(it);
     }
     if (rows.length === 0) return { lineCount: null, supported: false, unsupportedReason: 'line_count_failed' };
-    // 줄 위치를 캔버스 픽셀로 (위에서 아래 순). 계약 밖의 표시용 부가 정보.
     const lineBoxes = rows.map((r) => { const [, top] = viewport.convertToViewportPoint(0, r.y + r.h); return { top, height: r.h * viewport.scale }; });
     return { lineCount: rows.length, supported: true, unsupportedReason: null, lineBoxes };
   }
 
-  /** 검색용 페이지 텍스트 (계약 밖, 표시 보조). */
+  /** 검색용 페이지 텍스트 (계약 밖, 표시 보조). reflow 모드에서는 재배치된 쪽의 글. */
   async function getPageText(pageId) {
     if (!doc) return '';
+    if (mode === 'reflow') return (reflowed.pages[pageId - 1] ?? []).map((l) => l.text).join(' ');
     const page = await doc.getPage(pageId);
     const content = await page.getTextContent();
     return content.items.map((it) => it.str).join(' ');
   }
 
+  /** 재배치 결과 전체 (계약 밖). 정답 파일·시험용. */
+  function getReflow() {
+    return reflowed ? { version: REFLOW.version, layout: { ...REFLOW }, sourcePages: reflowed.sourcePages, pages: reflowed.pages } : null;
+  }
+
   async function close() {
     renderSeq++;
     if (doc) { try { await doc.destroy(); } catch (_) { /* ignore */ } }
-    doc = null;
+    doc = null; reflowed = null;
   }
 
-  return { open, renderPage, getPageText, close };
+  return { open, renderPage, getPageText, getReflow, close, mode };
 }

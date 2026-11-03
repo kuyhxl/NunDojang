@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>재배치 점검</title>
+<style>
+  :root { --ink: #161616; --muted: #666; --ok: #0a7a3d; --bad: #b3261e; --line: #ddd; }
+  body { margin: 0; padding: 32px 16px; background: #f6f6f4; color: var(--ink); font: 15px/1.6 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: var(--muted); }
+  label { display: inline-block; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #fff; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .ok { color: var(--ok); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  pre { white-space: pre-wrap; margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>재배치 점검</h1>
+  <p>원본 PDF와 같은 이름의 정답 파일(<code>demo/13px/*-13px-ground-truth.json</code>)을 함께 고르면, 앱이 다시 배치한 줄이 정답과 한 줄씩 같은지 확인합니다. 예: <code>demo/consent.pdf</code> + <code>demo/13px/consent-13px-ground-truth.json</code>. 여러 쌍을 한 번에 골라도 됩니다.</p>
+  <label>PDF와 정답 파일 고르기<input id="files" type="file" accept=".pdf,.json" multiple hidden></label>
+  <table id="out" hidden><thead><tr><th>문서</th><th>앱 쪽별 줄 수</th><th>정답 쪽별 줄 수</th><th>결과</th></tr></thead><tbody></tbody></table>
+</main>
+<script type="module">
+import { resolveAssetUrls, DEFAULT_CONFIG } from '../modules/config.js';
+import { reflowDocument, loadReflowFont, createMeasure } from '../modules/reflow.js';
+const urls = resolveAssetUrls(DEFAULT_CONFIG);
+const pdfjs = await import(urls.pdfjsModuleUrl);
+pdfjs.GlobalWorkerOptions.workerSrc = urls.pdfWorkerUrl;
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+document.getElementById('files').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  const truths = new Map();
+  for (const f of files.filter((f) => f.name.endsWith('.json'))) {
+    const j = JSON.parse(await f.text());
+    truths.set(j.source?.replace(/^.*\//, '') ?? f.name.replace('-13px-ground-truth.json', '.pdf'), j);
+    if (j.file) truths.set(j.file, j);   // 13px PDF를 다시 넣어 봐도 짝을 찾는다
+  }
+  await loadReflowFont(urls.reflowFontUrl);
+  const tbody = document.querySelector('#out tbody'); tbody.innerHTML = ''; document.getElementById('out').hidden = false;
+  for (const f of files.filter((f) => f.name.endsWith('.pdf'))) {
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
+    const r = await reflowDocument(doc, createMeasure());
+    const got = r.pages.map((p) => p.map((l) => l.text));
+    const gt = truths.get(f.name);
+    let verdict = '<span class="bad">정답 파일 없음</span>', detail = '';
+    if (gt) {
+      const want = gt.pages.map((p) => p.lines);
+      const norm = (t) => t.replace(/\s+/g, ' ');            // 공백 개수 차이(코드 줄)는 줄 판정과 무관
+      const a = got.flat().map(norm), b = want.flat().map(norm);
+      const i = a.findIndex((t, k) => t !== b[k]);
+      const same = i === -1 && a.length === b.length && got.every((p, k) => p.length === want[k]?.length);
+      verdict = same ? '<span class="ok">같음</span>' : '<span class="bad">다름</span>';
+      if (!same) { const k = i === -1 ? Math.min(a.length, b.length) : i; detail = `<pre>${k + 1}번째 줄\n앱:   ${esc(a[k] ?? '(없음)')}\n정답: ${esc(b[k] ?? '(없음)')}</pre>`; }
+    }
+    tbody.insertAdjacentHTML('beforeend', `<tr><td>${esc(f.name)}</td><td>${got.map((p) => p.length).join(' · ')}</td><td>${gt ? gt.pages.map((p) => p.lineCount).join(' · ') : '–'}</td><td>${verdict}${detail}</td></tr>`);
+  }
+  e.target.value = '';
+});
+</script>
+</body>
+</html>
