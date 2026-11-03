@@ -95,6 +95,36 @@ for (const el of [$('dropZone'), document.querySelector('.pane')]) {
 $('prevBtn').addEventListener('click', () => goToPage(currentPage - 1));
 $('nextBtn').addEventListener('click', () => goToPage(currentPage + 1));
 
+// 지면 위에서 스크롤하면 쪽 넘김. 지면 끝이 화면에 보일 때만 넘기고(그 전엔 평소처럼 스크롤),
+// 트랙패드 관성으로 여러 쪽이 한꺼번에 넘어가지 않게 한 번 넘긴 뒤 잠깐 쉰다.
+const WHEEL_TURN = 80;        // 이만큼 모이면 넘김 (마우스 휠 한 칸 ≈ 100)
+const WHEEL_COOLDOWN = 700;   // ms
+let wheelSum = 0, wheelLast = 0, wheelLockUntil = 0;
+document.querySelector('.page-frame').addEventListener('wheel', (e) => {
+  if (!store || pageCount < 1 || e.ctrlKey) return;              // ctrl+휠 = 확대 → 건드리지 않음
+  const now = performance.now();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const down = e.deltaY > 0;
+  const edgeVisible = down ? rect.bottom <= window.innerHeight + 2 : rect.top >= 0;
+  const canTurn = down ? currentPage < pageCount : currentPage > 1;
+  if (!edgeVisible || !canTurn) { wheelSum = 0; return; }        // 아직 지면 안쪽을 스크롤 중이거나 첫/끝 쪽
+  e.preventDefault();
+  if (now < wheelLockUntil) { wheelLockUntil = Math.max(wheelLockUntil, now + 150); return; }   // 관성이 이어지는 동안은 계속 잠금
+  if (now - wheelLast > 250 || Math.sign(wheelSum) !== Math.sign(e.deltaY)) wheelSum = 0;
+  wheelLast = now;
+  wheelSum += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;       // 줄 단위 휠은 px로
+  if (Math.abs(wheelSum) >= WHEEL_TURN) {
+    wheelSum = 0; wheelLockUntil = now + WHEEL_COOLDOWN;
+    goToPage(currentPage + (down ? 1 : -1));
+    // 창이 작아 지면이 잘려 있으면: 다음 쪽은 첫 줄부터, 이전 쪽은 마지막 줄부터 보이게
+    const frame = e.currentTarget, stickyH = document.querySelector('.pane-sticky')?.offsetHeight ?? 0;
+    const r = frame.getBoundingClientRect();
+    if (r.height + stickyH > window.innerHeight) {
+      window.scrollBy({ top: down ? r.top - stickyH - 8 : r.bottom - window.innerHeight, behavior: 'instant' });
+    }
+  }
+}, { passive: false });
+
 async function goToPage(pageId) {
   if (!store || pageId < 1 || pageId > pageCount) return;
   // 15절 순서: 구간 닫기 → detector.reset → 렌더·줄 수 → settle → 새 구간
