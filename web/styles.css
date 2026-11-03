@@ -97,6 +97,9 @@ button, input, label { font: inherit; }
   display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 8px; border-radius: 10px;
   color: var(--white); font-size: 16px; line-height: 24px; transition: background .2s ease;
 }
+.index-list li[data-page] { cursor: pointer; transition: background .15s; }
+.index-list li[data-page]:hover { background: rgba(255,255,255,.08); }
+.index-list li[data-page]:focus-visible { outline: 1px solid rgba(255,255,255,.8); outline-offset: -1px; }
 .index-list li.current { background: rgba(0,0,0,.05); box-shadow: inset 2px 0 0 var(--accent-line); }
 .index-list li.placeholder { color: rgba(255,255,255,.6); justify-content: flex-start; }
 .index-list li .num { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }

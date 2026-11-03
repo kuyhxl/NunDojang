@@ -93,6 +93,15 @@ for (const el of [$('dropZone'), document.querySelector('.pane')]) {
 }
 
 $('prevBtn').addEventListener('click', () => goToPage(currentPage - 1));
+// 왼쪽 '페이지' 목록에서 쪽을 누르면 그 쪽으로 (목록은 다시 그려지므로 ol에 한 번만 건다)
+const pageFromList = (e) => Number(e.target.closest('li[data-page]')?.dataset.page);
+$('pageList').addEventListener('click', (e) => { const n = pageFromList(e); if (n && n !== currentPage) goToPage(n); });
+$('pageList').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const n = pageFromList(e); if (!n) return;
+  e.preventDefault();
+  if (n !== currentPage) goToPage(n).then(() => $('pageList').querySelector(`li[data-page="${n}"]`)?.focus());  // 다시 그려진 목록에서 포커스 유지
+});
 $('nextBtn').addEventListener('click', () => goToPage(currentPage + 1));
 
 // 지면 위에서 스크롤하면 쪽 넘김. 지면 끝이 화면에 보일 때만 넘기고(그 전엔 평소처럼 스크롤),
@@ -291,9 +300,11 @@ function renderPanel() {
 
   const snap = store.getSnapshot();
   $('pageList').innerHTML = snap.pages.map((pg, i) => {
-    if (!pg) return `<li class="st-unmeasured"><span>${i + 1}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
+    const id = i + 1, cur = id === currentPage ? ' current' : '', aria = id === currentPage ? ' aria-current="page"' : '';
+    const attrs = `data-page="${id}" tabindex="0" role="button"${aria}`;   // 누르면 그 쪽으로 이동
+    if (!pg) return `<li class="st-unmeasured${cur}" ${attrs} title="${id}쪽으로 이동"><span>${id}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
     const e = pg.evaluation;
-    return `<li class="st-${e.status} ${pg.pageId === currentPage ? 'current' : ''}" title="${statusText(e)}"><span>${pg.pageId}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
+    return `<li class="st-${e.status}${cur}" ${attrs} title="${statusText(e)} · ${id}쪽으로 이동"><span>${id}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');
   $('signRequestBtn').disabled = !snap.canSign;
   $('navSignBtn').disabled = !snap.canSign;
