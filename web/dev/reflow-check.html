@@ -26,7 +26,7 @@
 </main>
 <script type="module">
 import { resolveAssetUrls, DEFAULT_CONFIG } from '../modules/config.js';
-import { reflowDocument, loadReflowFont, createMeasure } from '../modules/reflow.js';
+import { REFLOW, reflowDocument, loadReflowFont, createMeasure, textLines } from '../modules/reflow.js';
 const urls = resolveAssetUrls(DEFAULT_CONFIG);
 const pdfjs = await import(urls.pdfjsModuleUrl);
 pdfjs.GlobalWorkerOptions.workerSrc = urls.pdfWorkerUrl;
@@ -44,8 +44,8 @@ document.getElementById('files').addEventListener('change', async (e) => {
   const tbody = document.querySelector('#out tbody'); tbody.innerHTML = ''; document.getElementById('out').hidden = false;
   for (const f of files.filter((f) => f.name.endsWith('.pdf'))) {
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await f.arrayBuffer()) }).promise;
-    const r = await reflowDocument(doc, createMeasure());
-    const got = r.pages.map((p) => p.map((l) => l.text));
+    const r = await reflowDocument(doc, createMeasure(), REFLOW, { OPS: pdfjs.OPS });
+    const got = r.pages.map((p) => textLines(p).map((l) => l.text));
     const gt = truths.get(f.name);
     let verdict = '<span class="bad">정답 파일 없음</span>', detail = '';
     if (gt) {
