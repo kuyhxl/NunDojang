@@ -9,7 +9,7 @@ for (const c of fixtures.cases) {
   const ev = evaluatePage(c.pageState, DEFAULT_CONFIG);
   const e = c.expect;
   let ok = true;
-  if ('rawScore' in e && ev.rawScore !== e.rawScore) ok = false;
+  if ('rawScore' in e && !(e.rawScore === null ? ev.rawScore === null : Math.abs(ev.rawScore - e.rawScore) < 1e-9)) ok = false;
   if ('passed' in e && ev.passed !== e.passed) ok = false;
   if ('status' in e && ev.status !== e.status) ok = false;
   if (e.reasonIncludes && !e.reasonIncludes.every((r) => ev.reasonCodes.includes(r))) ok = false;
@@ -29,7 +29,7 @@ const sample = (seq, tMs, valid = true) => ({ contractVersion: CONTRACT_VERSION,
 for (let i = 0; i <= 300; i++) store.acceptSample({ sample: sample(i, i * 33), pageId: 1, segmentId: 'seg-1' });
 const ev = (n, t) => ({ contractVersion: CONTRACT_VERSION, sessionId: 'sess-fx', eventId: `sess-fx:event:${n}`, pageId: 1, segmentId: 'seg-1', tMs: t, type: 'return_sweep_candidate', amplitudeX: 0.1, durationMs: 150, detectorVersion: 'return-sweep/0.1.0' });
 store.acceptEvents(Array.from({ length: 8 }, (_, i) => ev(i + 1, (i + 1) * 1000)));
-check('8사건 10줄 → 페이지1 통과', store.getPage(1).evaluation.passed === true);
+check('8사건 10줄(기대 9) → 페이지1 통과', store.getPage(1).evaluation.passed === true);
 const before = store.getPage(1).acceptedEventCount;
 store.acceptEvents([ev(1, 1000)]);
 check('같은 eventId 재전송 → 사건 수 불변', store.getPage(1).acceptedEventCount === before);

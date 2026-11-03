@@ -5,7 +5,7 @@ export const APP_VERSION = 'nundojang/0.1.0-skeleton';
 
 export const DEFAULT_CONFIG = Object.freeze({
   contractVersion: CONTRACT_VERSION,
-  scorePolicyVersion: 'count-over-lines/0.1.0',
+  scorePolicyVersion: 'count-over-sweeps/0.2.0',   // 점수 = 줄바꿈 후보 / (줄 수 − 1). 0.1.0은 / 줄 수
   sealPolicyVersion: 'seal/0.1.0',
   sealIssuerPrefix: 'GG',
   passThreshold: 80,
