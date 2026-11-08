@@ -1,20 +1,72 @@
 <!doctype html>
-<html lang="ko">
-<head><meta charset="utf-8"><title>눈도장 · 측정 점검 (A)</title><link rel="stylesheet" href="../styles.css">
-<style>body{padding:16px;max-width:900px;margin:0 auto}</style></head>
-<body>
-<h1>측정 점검 화면 — A(박민서) 소유</h1>
-<p class="msg">이 화면과 <code>measurement.js</code>는 A가 자유롭게 바꿉니다. 목표: 카메라 켜기 → 양쪽 눈 상대 x·EAR 그래프 → samples.csv 저장. 제품 화면(index.html)의 DOM은 건드리지 않습니다.</p>
-<div class="row">
-  <button id="startBtn" class="btn primary">카메라 켜기</button>
-  <button id="stopBtn" class="btn" disabled>중지</button>
-  <button id="dlBtn" class="btn" disabled>samples.csv</button>
-  <span id="fps" class="muted"></span>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>눈도장 · A(민서) 상하 위치 시험 v0.8.0</title>
+<style>
+body{margin:24px auto;padding:0 20px;max-width:960px;background:#15171c;color:#eef1f7;font:16px/1.6 system-ui}button{font:inherit;padding:9px 14px;margin:4px;border:1px solid #76839a;border-radius:8px;background:#29364c;color:white;cursor:pointer}button:disabled{opacity:.45;cursor:default}video{width:min(100%,480px);background:#090b10;transform:scaleX(-1);border-radius:12px}canvas{width:100%;height:auto;background:#202631;border:1px solid #546078}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#202631;padding:14px}#status{padding:12px;border-left:4px solid #7bafff}.note{color:#bdc9de}.error{color:#ffb8b8}h1{font-size:28px}h2{font-size:20px}
+
+#taskCard{background:#fff;color:#172033;padding:24px;border-radius:12px;margin:24px 0;scroll-margin-top:16px}
+#taskTitle{margin:0;font-size:22px}#taskHint{margin:8px 0;font-size:16px}#target{height:290px;display:grid;place-items:center;font-size:44px}
+#readingText{font-size:20px;line-height:1.7;font-family:system-ui,sans-serif;padding:10px 0;width:var(--reading-width,100%);margin:0 auto}
+#readingText .line{white-space:nowrap}select{font:inherit;padding:8px}#phase{font-size:20px;font-weight:bold}
+#calibrationBox{position:relative;height:290px;width:var(--reading-width,100%);margin:0 auto}#calibrationDot{position:absolute;top:110px;left:50%;transform:translateX(-50%);font-size:44px;color:#175cba} [hidden]{display:none!important}
+#qualityPanel{padding:16px;background:#202631;border:1px solid #546078;border-radius:10px}#qualityPanel h2{margin-top:0}#qualityPanel p{margin:6px 0}#qualityPanel[data-state="warning"]{border-color:#ffc579}#qualityPanel[data-state="unavailable"]{border-color:#ffb8b8}#qualityPanel[data-state="observing"]{border-color:#74bbff}
+#viewerCanvas{display:block;border:0;background:white;width:auto;height:auto}
+#readingText.viewer-layout{width:var(--reading-surface-width);padding:0}
+#layoutStatus{padding:10px;border:1px solid #546078;border-radius:8px}
+#readingText{position:relative}
+#verticalDot{position:absolute;transform:translate(-50%,-50%);width:14px;height:14px;border:2px solid white;border-radius:50%;background:#175cba;box-shadow:0 0 0 2px #175cba;pointer-events:none}
+</style></head><body>
+<h1>A(민서) · 상하 위치 구분 시험 v0.8.0</h1>
+<p>실제 웹캠 → 양쪽 홍채 상대 x·EAR → CSV 저장. 중앙 응시와 글 읽기를 비교합니다. 줄바꿈 후보를 실시간으로 표시합니다. 후보 수를 읽기 점수나 읽은 줄 수로 확정하지 않습니다.</p>
+<div><label>글 배치 <select id="layoutMode"><option value="legacy">기존 시험 배치 · 20px / 10줄</option><option value="viewer">뷰어 참조 규격 · 같은 글을 다시 줄 나눔</option></select></label><button id="layoutPreviewBtn">글 배치 미리보기 (카메라 안 켬)</button></div>
+<p id="layoutStatus" role="status">배치를 선택하고 미리보기를 누르세요. 배치를 바꾸면 좌우 기준을 새로 측정해야 합니다.</p>
+<p class="note">뷰어 참조 규격은 확인한 C 코드의 설정과 그리기 함수를 A 시험용 파일에 보존한 것입니다. 현재 로컬 제품과 자동으로 연결되지는 않습니다. 이번에는 본문을 화면 중앙에 두어 글자·폭·줄 나눔의 차이를 먼저 비교합니다. 제품의 오른쪽 화면 위치, PDF 추출 과정과 점수·서명 연결은 다음 단계입니다.</p>
+<label>시험 선택 <select id="testMode"><option value="calibration">0. 좌우 기준 측정</option><option value="center">1. 중앙 응시 15초</option><option value="reading">2. 글 읽기</option><option value="center_calibrated">3. 조정 기준으로 중앙 응시</option><option value="reading_calibrated">4. 조정 기준으로 글 읽기</option><option value="linecheck_calibrated">5. 줄별 시점 기록 (조정 기준)</option><option value="posture_calibrated">6. 자세 변화 점검 20초 (조정 기준)</option><option value="vertical_calibration">7. 상하 기준 수집 · 약 30초</option><option value="vertical_validation">8. 별도 위치에서 상하 확인 · 약 39초</option></select></label>
+<div><button id="startBtn">측정 시작</button><button id="stopBtn" disabled>중지</button><button id="newBtn">새 기록</button><button id="dlBtn" disabled>samples.csv 저장</button><button id="eventsBtn" disabled>events.csv 저장</button><button id="diagBtn">진단 JSON 저장</button></div>
+<p id="profileStatus">좌우 기준 미측정. 기존 고정 기준 시험은 그대로 사용할 수 있습니다.</p>
+<p id="verticalStatus">상하 시험: 뷰어 참조 규격에서 0번 → 7번 → 8번 순서입니다. 파란 점을 보는 시험이며 글을 읽지 않습니다. 실제 줄 번호나 이해 여부를 판정하지 않습니다.</p>
+<p id="status" role="status">준비됐습니다. 측정 시작을 누르세요. 모델 준비에 시간이 걸릴 수 있습니다.</p>
+<section id="taskCard">
+<h2 id="taskTitle">중앙 응시 시험</h2><p id="taskHint">측정 시작 후 이 상자만 보세요. 준비 3초 뒤 중앙의 +를 15초간 봅니다. 자연스럽게 눈을 깜빡여도 됩니다.</p>
+<p id="phase" role="status">시작 전</p><div id="target">+</div>
+<div id="calibrationBox" hidden><span id="calibrationDot">+</span></div>
+<div id="readingText" hidden>
+<div class="line">아침에 창문을 열자 서늘한 바람이 들어왔습니다.</div>
+<div class="line">책상 위에는 어제 읽다 놓은 책이 펼쳐져 있었습니다.</div>
+<div class="line">나는 따뜻한 물을 한 잔 마시고 의자에 앉았습니다.</div>
+<div class="line">밖에서는 사람들이 천천히 길을 따라 걸어갔습니다.</div>
+<div class="line">잠시 뒤 구름 사이로 햇빛이 방 안에 들어왔습니다.</div>
+<div class="line">나는 오늘 할 일을 종이에 차례대로 적어 보았습니다.</div>
+<div class="line">먼저 필요한 자료를 모으고 내용을 살펴보기로 했습니다.</div>
+<div class="line">모르는 부분은 표시해 두었다가 다시 확인할 생각입니다.</div>
+<div class="line">한 가지씩 끝내면 생각보다 많은 일을 할 수 있습니다.</div>
+<div class="line">마지막으로 책상을 정리하고 조용히 하루를 시작했습니다.</div>
+<canvas id="viewerCanvas" hidden aria-label="뷰어 규격으로 재배치한 점검용 글"></canvas>
+<span id="verticalDot" hidden aria-hidden="true"></span>
 </div>
-<video id="video" playsinline muted style="width:320px;background:#111;transform:scaleX(-1)"></video>
-<h3>홍채 상대 x (0~1)</h3><canvas id="irisGraph" width="860" height="140"></canvas>
-<h3>EAR</h3><canvas id="earGraph" width="860" height="70"></canvas>
-<pre id="diag" class="small muted"></pre>
-<script type="module" src="./measurement.js"></script>
-</body>
-</html>
+<button id="finishBtn" disabled>다 읽었어요 · 측정 종료 (스페이스바)</button>
+<p class="note" style="color:#475569">글 읽기는 이 화면의 점검용 글입니다. 제품 PDF 뷰어와 점수 정책은 바꾸지 않습니다.</p>
+</section>
+<section id="qualityPanel" data-state="idle" aria-label="측정 상태 진단">
+<h2>측정 상태 · 진단용</h2>
+<p id="qualityStatus" role="status">측정 전입니다.</p>
+<p id="qualityEyes">눈: 아직 기록이 없습니다.</p>
+<p id="qualityFace">얼굴 위치: 좌우 기준 측정을 마치면 비교할 수 있습니다.</p>
+<p id="qualityNumbers">위치 변화 — / 눈꼬리 간격 변화 — / 기울기 변화 —</p>
+<p id="qualityStats">시험 구간 샘플 0개</p>
+<p class="note">양쪽 눈꼬리의 위치·간격·화면 안 기울기를 기준 측정 때와 비교합니다. 자세 변화 표시의 경계값은 시험용입니다. 실제 거리(cm)·고개 회전의 정확한 각도·읽기 여부를 판정하지 않습니다. 이번 버전에서는 표시만 하며 후보를 지우거나 자동 보정하지 않습니다.</p>
+</section>
+<h2>줄바꿈 후보 · 시험 뒤에 확인하세요</h2>
+<p id="eventCount">줄바꿈 후보 0개</p><pre id="eventList">아직 후보가 없습니다.</pre>
+<p class="note">기존 고정 기준 시험값: 방향 -1, 이동 크기 0.03, 이동 시간 40~400ms, 후보 간격 500ms, 평활화 60ms.
+오른쪽으로 읽어나간 뒤 왼쪽으로 돌아오는 움직임을 찾습니다. 실제 줄 번호나 상하 이동은 확인하지 않습니다.
+조정 시험에서는 별도 좌우 기준 측정값으로 이동 크기와 방향만 변경하며, 기존 고정 기준 후보 수도 함께 기록합니다. 기준 측정 통과는 보정 효과 검증을 의미하지 않습니다. 모든 값은 개발용이며, 다른 사람·환경에 적용되는 기준은 아닙니다. 제품의 공통 설정은 변경하지 않았습니다.</p>
+<video id="video"  autoplay playsinline muted></video>
+<p class="note">영상만 거울처럼 보입니다. 분석 x의 방향은 반전하지 않습니다. 머리를 가급적 고정하고 한 사람만 화면에 들어오세요.</p>
+<p id="values">측정값 없음</p><p id="stats">저장된 샘플 0개</p>
+<h2>홍채 상대 x · 최근 10초</h2><p class="note">파랑: 사용자 왼눈 / 주황: 사용자 오른눈. 눈 양끝 기준 0~1, 화면 시선 좌표가 아닙니다. 무효 구간은 선을 끊습니다.</p>
+<canvas id="irisGraph" width="900" height="180"></canvas>
+<h2>EAR · 최근 10초</h2><p class="note">눈이 벌어진 정도입니다. 눈을 감으면 보통 작아집니다. 깜빡임 횟수는 미설정이며 점수에 사용하지 않습니다.</p>
+<canvas id="earGraph" width="900" height="140"></canvas>
+<h2>진단</h2><pre id="diag">아직 모델을 준비하지 않았습니다.</pre>
+<p class="note">기록은 메모리에만 보관합니다. 새로고침·새 기록 전 samples CSV·events CSV·진단 JSON을 저장하세요. 얼굴 위치 진단 기록도 같은 진단 JSON에 포함됩니다. 약 20,000개에서 자동 중지합니다. 영상은 녹화하지 않습니다. 머리 움직임 보정·복수 얼굴 확인은 아직 없습니다.</p>
+<script type="module" src="./measurement.js"></script></body></html>
