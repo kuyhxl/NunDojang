@@ -215,6 +215,16 @@ window.visualViewport?.addEventListener('resize', checkZoom);
 window.nundojang = { reflow: () => pdf?.getReflow?.() ?? null };
 
 // ---------- 카메라·측정 ----------
+// 트래커가 이 오류들을 보고하면 스스로 멈춘다. 앱도 구간을 닫고 '꺼짐' 상태로 맞춘다. "카메라 시작"으로 같은 세션을 이어 간다.
+const TRACKER_STOPPED_CODES = new Set(['camera_lost', 'timestamp_error', 'inference_failed']);
+function handleTrackerError(err) {
+  setMsg('viewerMsg', `측정 오류: ${err.message}`, err.recoverable ? 'warn' : 'bad');
+  if (!TRACKER_STOPPED_CODES.has(err.code)) return;
+  endSegment('camera_lost'); measuring = false;
+  updateCamBadge(false); updateMeasureBtn();
+  $('camStopBtn').disabled = true; $('measureToggleBtn').disabled = true;
+}
+
 $('camStartBtn').addEventListener('click', async () => {
   if (!store) return;
   if (!window.isSecureContext || !navigator.mediaDevices) { setMsg('viewerMsg', '카메라를 쓸 수 없는 환경입니다 (localhost 또는 HTTPS에서 여세요).', 'bad'); return; }
@@ -223,11 +233,11 @@ $('camStartBtn').addEventListener('click', async () => {
       tracker = await createEyeTracker({
         videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
         onSample: handleSample,
-        onError: (err) => setMsg('viewerMsg', `측정 오류: ${err.message}`, err.recoverable ? 'warn' : 'bad')
+        onError: handleTrackerError
       });
     }
     await tracker.start({ sessionId: store.getSnapshot().sessionId, sessionT0 });
-    measuring = true; updateCamBadge(true); updateMeasureBtn();
+    measuring = true; updateCamBadge(true); updateMeasureBtn(); setMsg('viewerMsg', '', '');
     $('camStopBtn').disabled = false; $('measureToggleBtn').disabled = false;
     const info = store.getPage(currentPage);
     if (info?.supported) beginSegment();
