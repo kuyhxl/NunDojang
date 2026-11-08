@@ -1,7 +1,7 @@
 // A 소유 · 실제 카메라 측정 1차. 공개 계약 gazegate-contract/1.1.0 유지.
 import { CONTRACT_VERSION } from './contracts.js';
 export const IS_MOCK = false;
-const VERSION = 'a-measurement/0.4.0';
+const VERSION = 'a-measurement/0.4.2';
 const OPTIONS = { runningMode: 'VIDEO', numFaces: 1,
   minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5,
   minTrackingConfidence: 0.5, outputFaceBlendshapes: false,
@@ -40,7 +40,7 @@ function eyeValues(points, ids, w, h) {
 // 화면 시선 좌표가 아니며 yaw/pitch나 3D 머리 자세를 보정하지 않는다.
 export function measureEyeGeometry(points,w,h){
   if(!Number.isFinite(w)||!Number.isFinite(h)||w<=0||h<=0)return null;
-  const result={version:'eye-axis-2d/0.1.0',diagnosticOnly:true};
+  const result={version:'eye-axis-2d/0.2.0',diagnosticOnly:true};
   for(const name of ['left','right']){
     const ids=EYES[name];let a=points?.[ids[0]],b=points?.[ids[3]],i=points?.[ids[6]];
     if([a,b,i].some(p=>!p||![p.x,p.y].every(v=>Number.isFinite(v)&&v>=0&&v<=1)))return null;
@@ -48,8 +48,27 @@ export function measureEyeGeometry(points,w,h){
     const dx=(b.x-a.x)*w,dy=(b.y-a.y)*h,ix=(i.x-a.x)*w,iy=(i.y-a.y)*h,den=dx*dx+dy*dy;
     if(den<4)return null;
     result[name]={u:(ix*dx+iy*dy)/den,v:(iy*dx-ix*dy)/den,eyeWidthPx:Math.sqrt(den)};
+    // 기존 u/v를 유지하고 같은 프레임의 눈꺼풀 기준을 진단용으로 추가합니다.
+    const lidIds=[ids[1],ids[2],ids[4],ids[5]],ps=lidIds.map(id=>points?.[id]);
+    if(ps.some(p=>!p||![p.x,p.y].every(v=>Number.isFinite(v)&&v>=0&&v<=1))){
+      result[name].lids=null;
+    }else{
+      const projected=ps.map(p=>{const x=(p.x-a.x)*w,y=(p.y-a.y)*h;
+        return {u:(x*dx+y*dy)/den,v:(y*dx-x*dy)/den};});
+      const upperV=(projected[0].v+projected[1].v)/2;
+      const lowerV=(projected[2].v+projected[3].v)/2;
+      const midV=(upperV+lowerV)/2,gapV=lowerV-upperV,gapPx=gapV*Math.sqrt(den);
+      const usable=Number.isFinite(gapPx)&&gapPx>=2;
+      result[name].lids={landmarkIds:lidIds,pointsEyeAxes:projected,upperV,lowerV,midV,gapV,gapPx,
+        irisMinusMidV:result[name].v-midV,
+        irisFraction:gapV>1e-12?(result[name].v-upperV)/gapV:null,
+        usable,reason:usable?null:'lid_gap_too_small_or_reversed'};
+    }
   }
   result.meanV=(result.left.v+result.right.v)/2;
+  const lids=[result.left.lids,result.right.lids];
+  result.meanLidCenteredV=lids.every(l=>l?.usable)?(lids[0].irisMinusMidV+lids[1].irisMinusMidV)/2:null;
+  result.meanLidFraction=lids.every(l=>l?.usable&&Number.isFinite(l.irisFraction))?(lids[0].irisFraction+lids[1].irisFraction)/2:null;
   return result;
 }
 function signals(points, w, h) {
@@ -75,6 +94,7 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
   let videoWidth = null, videoHeight = null, trackSettings = null;
   let callbackCount = 0, duplicateFramesSkipped = 0, presentationGaps = 0, lastPresented = null;
   let lastVideoFrame = null, lastFrameDiagnostics = null;
+  let sampleCallbackErrors = 0;
   function schedule(g) {
     if (running && !destroyed && g === generation)
       raf = videoElement.requestVideoFrameCallback((_now, metadata) => tick(g, metadata));
@@ -108,6 +128,7 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
       }
       // 모델 시각은 객체 수명 동안 증가, Sample은 호출자가 정한 세션 원점 사용.
       modelT = Math.max(frameNow, modelT+0.001);
+      let sample;
       try {
         const result = model.detectForVideo(videoElement, modelT);
         if (!running || destroyed || g !== generation) return;
@@ -122,8 +143,14 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
           eyeGeometry:faces.length&&values.valid?measureEyeGeometry(faces[0],videoElement.videoWidth,videoElement.videoHeight):null};
         fpsTimes.push(tMs); if(fpsTimes.length>60)fpsTimes.shift();
         frames++; firstT ??= tMs; latestT = tMs; lastSampleT = tMs;
-        onSample({ contractVersion: CONTRACT_VERSION, source: 'mediapipe_iris', sessionId, seq: seq++, tMs, ...values });
+        sample={ contractVersion: CONTRACT_VERSION, source: 'mediapipe_iris', sessionId, seq: seq++, tMs, ...values };
       } catch (e) { report('inference_failed', `측정 중 오류: ${e.message}`); void stop(); return; }
+      // 소비자(화면/저장) 코드 오류를 추론 실패로 보고하거나 카메라를 끄지 않는다.
+      // 오류는 호출자/브라우저에 전달하고 다음 프레임 예약은 보장한다.
+      try { onSample(sample); }
+      catch (e) { sampleCallbackErrors++; throw e; }
+      finally { schedule(g); }
+      return;
     }
     schedule(g);
   }
@@ -135,7 +162,7 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
       return starting ?? Promise.resolve();
     }
     if (opts.sessionId === sessionId && opts.sessionT0 !== sessionT0) return Promise.reject(new Error('같은 세션의 시간 원점을 바꿀 수 없습니다.'));
-    if (opts.sessionId !== sessionId) { seq = 0; frames = 0; lastSampleT = -1; firstT = null; latestT = null; callbackCount = 0; duplicateFramesSkipped = 0; presentationGaps = 0; }
+    if (opts.sessionId !== sessionId) { seq = 0; frames = 0; lastSampleT = -1; firstT = null; latestT = null; callbackCount = 0; duplicateFramesSkipped = 0; presentationGaps = 0; sampleCallbackErrors=0; }
     sessionId = opts.sessionId; sessionT0 = opts.sessionT0; lastMediaT = null; lastPresented = null; lastVideoFrame = null; lastFrameDiagnostics=null; fpsTimes = [];
     const g = ++generation;
     starting = (async () => {
@@ -164,14 +191,16 @@ export async function createEyeTracker({ videoElement, wasmBaseUrl, modelAssetUr
   return { start, stop,
     async destroy() { if (destroyed) return; destroyed = true; await stop(); model.close(); },
     getDiagnostics() {
-      return { mock: false, trackerVersion: VERSION, running, destroyed, videoWidth, videoHeight,
+      return { mock: false, trackerVersion: VERSION, implementationRevision:'pr9-fixes/0.1.0',sampleCallbackErrors,
+        running, destroyed, videoWidth, videoHeight,
         requestedConstraints: CONSTRAINTS, actualTrackSettings: trackSettings, framesProcessed: frames,
         frameScheduler: 'requestVideoFrameCallback', callbackCount, duplicateFramesSkipped,
         presentationFramesNotObserved: presentationGaps, lastVideoFrame,
         lastFrameDiagnostics:lastFrameDiagnostics?{...lastFrameDiagnostics,
           faceGeometry:lastFrameDiagnostics.faceGeometry?{...lastFrameDiagnostics.faceGeometry}:null,
           eyeGeometry:lastFrameDiagnostics.eyeGeometry?structuredClone(lastFrameDiagnostics.eyeGeometry):null}:null,
-        eyeGeometryVersion:'eye-axis-2d/0.1.0',eyeGeometryDiagnosticOnly:true,
+        eyeGeometryVersion:'eye-axis-2d/0.2.0',eyeGeometryDiagnosticOnly:true,
+        eyelidGeometryVersion:'eye-lids-reference/0.1.0',eyelidGeometryDiagnosticOnly:true,
         faceGeometryVersion:'eye-corners-2d/0.1.0',faceGeometryLandmarks:[33,263],
         faceGeometryDiagnosticOnly:true,
         estimatedFps: fpsTimes.length>1 ? (fpsTimes.length-1)*1000/(fpsTimes.at(-1)-fpsTimes[0]) : null,
