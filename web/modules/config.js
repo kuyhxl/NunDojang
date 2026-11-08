@@ -26,16 +26,17 @@ export const DEFAULT_CONFIG = Object.freeze({
   sealFontPath: './vendor/fonts/NotoSansKR-Regular.ttf'
 });
 
-// 사건 검출 설정 — null은 A가 측정으로 채운다. null인 동안 검출기는 사건을 내지 않는다.
+// 사건 검출 설정 — A의 시험값(PR #9 PILOT_CONFIG, return-sweep/0.1.0-pilot2). 개발용 초기값이며 일반 사용자로 검증된 값이 아니다.
+// null로 되돌리면 검출기는 사건을 내지 않는다.
 export const DETECTOR_CONFIG = Object.freeze({
-  detectorVersion: 'return-sweep/0.1.0',
-  directionSign: null,
+  detectorVersion: 'return-sweep/0.1.0-pilot2',
+  directionSign: -1,
   maxFrameGapMs: DEFAULT_CONFIG.maxFrameGapMs,
-  minAmplitudeX: null,
-  minDurationMs: null,
-  maxDurationMs: null,
-  refractoryMs: null,
-  smoothingWindowMs: 0
+  minAmplitudeX: 0.03,
+  minDurationMs: 40,
+  maxDurationMs: 400,
+  refractoryMs: 500,
+  smoothingWindowMs: 60
 });
 
 // 깜빡임 설정 — null인 동안 깜빡임 횟수는 '미설정'으로 표시.
