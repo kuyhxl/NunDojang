@@ -16,6 +16,27 @@ export const REFLOW = Object.freeze({
   fontFamily: 'NunDojang Reflow'
 });
 
+// 큰 글자 시험판 (개발용, 팀 합의 전 — 주소에 ?reflow=20). 13px판을 1.5배로 키우고 양옆 여백을 줄였다.
+// 왜: 줄 간격 26px은 웹캠 시선의 세로 오차(실측 중간값 16~36px)보다 작아 읽는 줄을 가리기 어렵고,
+//     520px 단은 줄바꿈 눈 이동 폭이 작다. 한 줄 글자 수(한글 약 40자)는 그대로 두어 읽는 느낌은 같게 했다.
+// 크기: 1512×828 화면에서 PDF 틀(약 880px 폭, 화면 위 약 217px부터 — styles.css is-reflow-lg) 안에 한 쪽이
+//      스크롤 없이, 아래 떠 있는 막대(화면 아래 약 84px)에 가리지 않고 들어가는 최대치.
+//      쪽 높이 20 + 12×40 + 20 = 520px. 틀 폭이 848px(800+48)보다 좁으면 가로 스크롤이 생긴다.
+export const REFLOW_20 = Object.freeze({
+  ...REFLOW,
+  version: 'reflow-20px/0.2.0-dev',
+  fontPx: 20,
+  lineHeightPx: 40,
+  columnPx: 800,
+  padTopPx: 20,
+  padBottomPx: 20
+});
+
+/** 글자 크기(13·20)로 재배치 설정을 고른다. 모르는 값은 기본 13px판. */
+export function reflowLayout(size) {
+  return Number(size) === 20 ? REFLOW_20 : REFLOW;
+}
+
 const MARK = /^(\d+\.\s|\d+\.\d+\s|\[\d+\](?:\s|$)|[•·\-–]\s|\([가-힣]\)|[①-⑳])/;   // 목록·참고문헌 항목의 시작
 const CELL = '\u001f';   // 줄 안의 표 칸 경계 (나중에 │ 또는 공백으로 바꾼다)
 const CELL_BAR = '\u00a0│ ';   // 표의 칸 구분. 앞을 줄바꿈 없는 공백으로 붙여 │가 줄 맨 앞에 오지 않게
@@ -355,7 +376,8 @@ export function drawPage(canvas, pageLines, opts = REFLOW) {
     ctx.fillStyle = '#141414';
     ctx.fillText(ln.text, left, y);
     if (ln.kind === 'h') { ctx.strokeStyle = '#141414'; ctx.lineWidth = 0.45; ctx.strokeText(ln.text, left, y); }  // 굵게: 폭이 바뀌지 않게 획만 덧칠
-    boxes.push({ top, height: opts.lineHeightPx, left, width: opts.columnPx });   // 물방울은 글줄만 따라간다
+    // 물방울은 글줄만 따라간다. textWidth는 실제 글자 폭(보조 점수: 앞줄이 긴 줄바꿈만 센다)
+    boxes.push({ top, height: opts.lineHeightPx, left, width: opts.columnPx, textWidth: Math.round(ctx.measureText(ln.text).width) });
     slot += 1;
   }
   return boxes;

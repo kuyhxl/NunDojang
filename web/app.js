@@ -9,7 +9,8 @@ import { createSessionStore } from './modules/sessionStore.js';
 import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './modules/signature.js';
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
-import { formatScore, expectedReturnSweeps } from './modules/pageScoring.js';
+import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
+import { createGazeSweepCounter, sweepOptionsFor } from './modules/gazeSweep.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -17,7 +18,9 @@ import { createGazeTracker } from './modules/gazeTracker.js';
 import { createGazeLog, gazeLogRow } from './modules/gazeLog.js';
 
 const $ = (id) => document.getElementById(id);
-const config = DEFAULT_CONFIG;
+// ?reflow=20 → 큰 글자 시험판(개발용). 없으면 기본 13px판.
+const reflowParam = Number(new URLSearchParams(location.search).get('reflow'));
+const config = reflowParam === 20 ? Object.freeze({ ...DEFAULT_CONFIG, reflowSize: 20 }) : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
 
@@ -50,6 +53,9 @@ const gazeLog = new URLSearchParams(location.search).has('gazelog')
 let gazeFit = null;        // 보정 판정 {xErrorPx, yErrorPx, yUsable}
 let gazeReference = null;  // 보정 때의 자세
 let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 줄 맞춤 자리를 잡는 데 쓴다
+// 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
+const auxPages = new Map();
+let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let driftSince = null, driftWarned = false;
 const POSE_DRIFT_WARN_MS = 2000;
 const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
@@ -71,6 +77,7 @@ if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden 
   try {
     pdf = await createPdfManager({ canvasElement: $('pdfCanvas'), config });
     document.body.classList.toggle('is-reflow', pdf.mode === 'reflow');
+    document.body.classList.toggle('is-reflow-lg', pdf.mode === 'reflow' && pdf.layout.fontPx > 13);   // 큰 글자판: 틀을 조금 올린다
   } catch (e) {
     setMsg('viewerMsg', e.message, 'bad');
   }
@@ -82,15 +89,16 @@ async function openPdfFile(file) {
   if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { setMsg('viewerMsg', 'PDF 파일만 열 수 있습니다.', 'bad'); return; }
   await closeDocument();
   try {
-    if (pdf.mode === 'reflow') setMsg('viewerMsg', '텍스트를 뽑아 13px로 다시 배치하는 중…', '');
+    if (pdf.mode === 'reflow') setMsg('viewerMsg', `텍스트를 뽑아 ${pdf.layout.fontPx}px로 다시 배치하는 중…`, '');
     const { pageCount: n, sourcePageCount } = await pdf.open(file);
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · 13px` : `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px` : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
     sessionT0 = performance.now(); segmentCounter = 0;
+    auxPages.clear();
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
@@ -180,9 +188,10 @@ async function goToPage(pageId) {
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
+  gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
-    gazeLog.meta({ type: 'page', pageId, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
+    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
   }
   $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
@@ -200,6 +209,7 @@ async function closeDocument() {
   clearCalibration(); await stopGaze();
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
+  auxPages.clear(); gazeSweep = null;
   if (pdf) await pdf.close();
   $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
   $('pageScore').textContent = '–'; $('pageStatus').textContent = 'PDF를 열면 측정이 시작됩니다'; $('pageStatus').className = 'status';
@@ -223,6 +233,43 @@ function endSegment(reason) {
   if (!SEGMENT_END_REASONS.includes(reason)) reason = 'manual_stop';
   store.endSegment({ tMs: nowMs(), reason });
   segmentOpen = false;
+  logAuxScore(currentPage, reason);
+}
+
+/** 지금 쪽 글 왼쪽 끝의 화면 x (시선 좌표와 같은 뷰포트 CSS px). 가로 스크롤이 없으면 쪽 안에서 바뀌지 않는다. */
+function textLeftPx() {
+  const first = pageLineBoxes[0];
+  return first ? $('pdfCanvas').getBoundingClientRect().left + first.left : NaN;
+}
+/** 쪽 하나의 보조 점수. 공식 점수와 나란히 비교하려고 계산만 하며 화면·봉인에는 쓰지 않는다. */
+function auxScoreOf(pageId) {
+  const p = store?.getPage(pageId);
+  if (!p || pdf?.mode !== 'reflow' || pageId !== currentPage) return null;
+  const widths = pageLineBoxes.map((b) => b.textWidth).filter(Number.isFinite);
+  const detectable = expectedDetectableSweeps(widths, pdf.layout.columnPx);
+  const gazeSweeps = auxPages.get(pageId)?.gazeSweeps ?? 0;
+  return {
+    policy: AUX_POLICY_VERSION, pageId, lineCount: p.lineCount, weightRamp: AUX_WEIGHT_RAMP,
+    expectedSweeps: expectedReturnSweeps(p.lineCount), detectableSweeps: Math.round(detectable * 100) / 100,
+    acceptedEventCount: p.acceptedEventCount, gazeSweeps,
+    officialScore: p.evaluation.rawScore,
+    auxDetector: auxScore(p.acceptedEventCount, detectable),   // A의 줄바꿈 후보 ÷ 잡힐 수 있는 줄바꿈
+    auxGaze: auxScore(gazeSweeps, detectable),                 // C의 시선 x 줄바꿈 ÷ 잡힐 수 있는 줄바꿈
+    lineWidths: widths
+  };
+}
+function logAuxScore(pageId, reason) {
+  const aux = auxScoreOf(pageId);
+  if (aux) gazeLog?.meta({ type: 'auxScore', reason, ...aux });
+}
+/** 측정 구간이 열려 있을 때만 시선 x 줄바꿈을 센다 (공식 점수와 같은 시간 범위). */
+function countGazeSweep(g) {
+  if (!gazeSweep || !segmentOpen || !store || calibration.active || !g?.valid || g.rawXNorm == null) return;
+  const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
+  if (gazeSweep.push({ tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true })) {
+    const a = auxPages.get(currentPage) ?? { gazeSweeps: 0 };
+    a.gazeSweeps++; auxPages.set(currentPage, a);
+  }
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { endSegment('tab_hidden'); setMsg('viewerMsg', '탭이 숨겨져 측정을 일시정지했습니다. "측정 재개"를 누르세요.', 'warn'); measuring = false; updateMeasureBtn(); } });
 window.addEventListener('resize', () => {
@@ -245,7 +292,7 @@ function zoomLooksOff() {
 function checkZoom() {
   if (pdf?.mode !== 'reflow' || !store) return;
   const off = zoomLooksOff();
-  if (off) setMsg('viewerMsg', '브라우저 배율이 100%가 아닌 것 같습니다. 글자가 13px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.', 'warn');
+  if (off) setMsg('viewerMsg', `브라우저 배율이 100%가 아닌 것 같습니다. 글자가 ${pdf.layout.fontPx}px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.`, 'warn');
   else if ($('viewerMsg').textContent.startsWith('브라우저 배율')) setMsg('viewerMsg', '', '');
 }
 window.visualViewport?.addEventListener('resize', checkZoom);
@@ -253,6 +300,7 @@ window.visualViewport?.addEventListener('resize', checkZoom);
 // 개발·시험용: 재배치 결과를 콘솔에서 확인 (window.nundojang.reflow())
 window.nundojang = {
   reflow: () => pdf?.getReflow?.() ?? null,
+  aux: () => auxScoreOf(currentPage),   // 지금 쪽의 보조 점수 (기록 전용)
   light: () => lastLuma,
   gaze: () => gazeTracker && { ...gazeTracker.getDiagnostics(), measurementFps: tracker?.getDiagnostics().estimatedFps ?? null }
 };
@@ -281,7 +329,7 @@ async function startGaze() {
     gazeTracker ??= await createGazeTracker({
       videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
       options: { shareVideo: true },
-      onGaze: (g) => { latestGaze = g; gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
+      onGaze: (g) => { latestGaze = g; countGazeSweep(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
       onError: handleGazeError
     });
     await gazeTracker.start();
