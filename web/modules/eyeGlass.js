@@ -2,7 +2,8 @@
 //  가로: 홍채 상대 x(두 눈 평균)를 따라감
 //  세로: 줄바꿈 후보 사건이 누적될 때마다 다음 줄로 (pdfManager의 줄 위치 사용)
 //  움직임: 스프링 물리(관성·오버슈트) + 이동 방향으로 늘어나는 액체 변형 + 깜빡임 시 납작해짐
-// 시선 좌표 추정이 아니다. "줄 단위 읽기 리듬"을 보여주는 시각화다.
+// 위 동작은 보정이 없을 때의 표시이며 "줄 단위 읽기 리듬"을 보여준다.
+// 보정된 시선이 있으면 그 좌표를 따라 화면 전체를 움직여, 지면 밖으로 벗어난 것도 그대로 보인다.
 
 export function createEyeGlass(container, { size = 56, stiffness = 120, damping = 14, maxStretch = 0.28 } = {}) {
   container.classList.add('gaze-layer');
@@ -21,6 +22,8 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   const pos = { x: 0.5, y: 0.25 };
   const vel = { x: 0, y: 0 };
   let raf = null, last = 0, visible = false;
+  let followsGazeY = false;   // 보정된 세로값을 쓰는 중이면 줄바꿈 후보로 세로를 움직이지 않고, 화면 전체에서 표시한다
+  const unit = (v) => Math.min(1, Math.max(0, v));
 
   function setFog(on, text) { container.classList.toggle('is-fogged', on); note.textContent = text ?? ''; }
   setFog(true, '');
@@ -53,6 +56,20 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   }
   const kick = () => { if (!raf) { last = performance.now(); raf = requestAnimationFrame(step); } };
 
+  /** 지면 안 표시와 화면 전체 표시를 오간다. 기준 영역이 바뀌어도 물방울이 튀지 않게 위치를 옮겨 적는다. */
+  function setFree(free) {
+    if (free === followsGazeY) return;
+    const before = container.getBoundingClientRect();
+    const px = { x: before.left + pos.x * before.width, y: before.top + pos.y * before.height };
+    container.classList.toggle('is-free', free);
+    followsGazeY = free;
+    const after = container.getBoundingClientRect();
+    pos.x = (px.x - after.left) / (after.width || 1);
+    pos.y = (px.y - after.top) / (after.height || 1);
+    vel.x = vel.y = 0;
+    if (!free) target.y = lineY(lineIndex);
+  }
+
   function closure(ear) {
     if (ear === null || !Number.isFinite(ear)) return 0;
     earBase = earBase === null ? ear : Math.max(earBase * 0.995, ear);
@@ -64,23 +81,33 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
       lines = Array.isArray(boxes) ? boxes : []; lineIndex = 0;
       const W = container.clientWidth || 1, b = lines[0];
       span = b && Number.isFinite(b.left) && Number.isFinite(b.width) ? { left: b.left / W, width: b.width / W } : { left: 0.14, width: 0.72 };
-      target.y = lineY(0); kick();
+      if (!followsGazeY) target.y = lineY(0);
+      kick();
     },
     setDirectionSign(s) { directionSign = s === -1 ? -1 : 1; },
-    advance(n = 1) { lineIndex = Math.min(lineIndex + n, Math.max(lines.length - 1, 0)); target.y = lineY(lineIndex); kick(); },
-    resetLine() { lineIndex = 0; target.y = lineY(0); kick(); },
-    update(sample) {
+    advance(n = 1) { lineIndex = Math.min(lineIndex + n, Math.max(lines.length - 1, 0)); if (!followsGazeY) target.y = lineY(lineIndex); kick(); },
+    resetLine() { lineIndex = 0; if (!followsGazeY) target.y = lineY(0); kick(); },
+    /** @param gaze 보정이 있을 때의 화면 좌표 {x, y|null} (CSS px). 없으면 홍채 x로 대강 표시한다 */
+    update(sample, gaze = null) {
       if (!sample.valid || sample.leftIrisX === null || sample.rightIrisX === null) { setFog(true, reasonText(sample.invalidReason)); return; }
       if (!visible) { visible = true; container.classList.add('is-visible'); }
       setFog(false, '');
-      const x = (sample.leftIrisX + sample.rightIrisX) / 2;
-      const screenX = directionSign === 1 ? x : 1 - x;
-      target.x = span.left + Math.min(1, Math.max(0, (screenX - 0.3) / 0.4)) * span.width;
+      const useGazeY = gaze !== null && gaze.y !== null;
+      setFree(useGazeY);
+      if (gaze) {
+        const rect = container.getBoundingClientRect();
+        target.x = unit((gaze.x - rect.left) / (rect.width || 1));
+        if (useGazeY) target.y = unit((gaze.y - rect.top) / (rect.height || 1));
+      } else {
+        const x = (sample.leftIrisX + sample.rightIrisX) / 2;
+        const screenX = directionSign === 1 ? x : 1 - x;
+        target.x = span.left + Math.min(1, Math.max(0, (screenX - 0.3) / 0.4)) * span.width;
+      }
       const ear = sample.leftEar !== null && sample.rightEar !== null ? (sample.leftEar + sample.rightEar) / 2 : null;
       drop.style.setProperty('--close', closure(ear).toFixed(2));
       kick();
     },
-    idle() { visible = false; container.classList.remove('is-visible'); setFog(true, ''); earBase = null; vel.x = vel.y = 0; }
+    idle() { setFree(false); visible = false; container.classList.remove('is-visible'); setFog(true, ''); earBase = null; vel.x = vel.y = 0; }
   };
 }
 
