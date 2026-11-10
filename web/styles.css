@@ -242,6 +242,16 @@ body.is-reflow .page-frame { min-height: 0; overflow-x: auto; }
 body.is-reflow #pdfCanvas { max-width: none; }
 /* 큰 글자판(?reflow=20): 쪽 높이가 520px라 아래 떠 있는 막대에 마지막 줄이 가리지 않도록 틀을 16px 올린다 */
 body.is-reflow-lg .page-frame { margin-top: 16px; }
+/* 읽기 모드(?focus=1): 측정하는 동안 지면을 화면 가운데에 띄운다. 웹캠(화면 위 가운데)과 가까워 눈이 정면으로 찍힌다.
+   transform을 쓰지 않는다: 물방울(.gaze-layer.is-free)이 position: fixed라 transform 조상이 있으면 기준이 틀어진다. */
+.shell::after { content: ""; position: fixed; inset: 0; z-index: 44; background: rgba(10,10,10,.62); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+body.is-focus .shell::after { opacity: 1; pointer-events: auto; }
+body.is-focus .page-frame { position: fixed; inset: 0; z-index: 45; margin: auto; width: min(var(--focus-w, 896px), calc(100vw - 32px)); max-width: none; height: fit-content; max-height: calc(100vh - 32px); overflow: hidden; }
+body.is-focus .floatnav { z-index: 60; }
+.nav-exit { border: 0; background: rgba(255,255,255,.1); cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 8px; }
+.nav-exit:hover { background: rgba(255,255,255,.18); }
+.nav-exit .kbd { color: rgba(255,255,255,.6); font-size: 12px; }
+.nav-exit[hidden] { display: none; }
 
 /* ---- 하단 플로팅 pill nav (사이트 실측) ---- */
 .floatnav {

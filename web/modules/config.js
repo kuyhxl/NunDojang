@@ -17,7 +17,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   modelRuntimeEnabled: false,
   validationLevel: 'pilot',
   viewMode: 'reflow',            // 'reflow' = 13px 한 단 재배치(기본, 11/3 결정) · 'original' = 원본 그대로(비교용)
-  reflowSize: 13,                // 재배치 글자 크기. 20 = 큰 글자 시험판(개발용, 주소에 ?reflow=20, 팀 합의 전)
+  reflowSize: 13,                // 재배치 글자 크기. 20·24 = 큰 글자 시험판(개발용, 주소에 ?reflow=20 또는 24, 팀 합의 전)
   reflowFontPath: './vendor/fonts/NotoSansKR-Regular.ttf',  // 재배치 글꼴. demo/13px PDF와 같은 글꼴이라 줄 나눔이 같다
   mediaPipeWasmPath: './vendor/mediapipe/wasm',
   faceModelPath: './models/face_landmarker.task',

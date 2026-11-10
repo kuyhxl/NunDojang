@@ -18,13 +18,15 @@ import { createGazeTracker } from './modules/gazeTracker.js';
 import { createGazeLog, gazeLogRow } from './modules/gazeLog.js';
 
 const $ = (id) => document.getElementById(id);
-// ?reflow=20 → 큰 글자 시험판(개발용). 없으면 기본 13px판.
+// ?reflow=20 · ?reflow=24 → 큰 글자 시험판(개발용). 없으면 기본 13px판.
 const urlParams = new URLSearchParams(location.search);
 const reflowParam = Number(urlParams.get('reflow'));
 // ?ylock=1 → 세로 고정 표시(개발용 시험): 물방울 세로는 지금 줄 밑선에 두고 가로만 시선을 따라간다.
 // 줄은 시선 x 줄바꿈(gazeSweep.js)으로 넘긴다. 표시 전용이며 점수에는 영향이 없다.
 const yLock = urlParams.has('ylock');
-const config = reflowParam === 20 ? Object.freeze({ ...DEFAULT_CONFIG, reflowSize: 20 }) : DEFAULT_CONFIG;
+// ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
+const focusMode = urlParams.has('focus');
+const config = reflowParam === 20 || reflowParam === 24 ? Object.freeze({ ...DEFAULT_CONFIG, reflowSize: reflowParam }) : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
 
@@ -189,8 +191,19 @@ async function goToPage(pageId) {
   endSegment('page_change');
   detector?.reset();
   currentPage = pageId;
-  const info = await pdf.renderPage(pageId);
+  const info = await showPage(pageId);
   if (!info) return; // 늦은 렌더
+  // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
+  // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
+  if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
+  await sleep(config.pageSettleMs);
+  if (measuring && info.supported && !document.hidden) beginSegment();
+}
+
+/** 쪽을 그리고 그 쪽에 딸린 상태(줄 상자·물방울·줄바꿈 계수기·기록)를 새로 맞춘다. 읽기 모드로 자리를 옮길 때도 쓴다. */
+async function showPage(pageId) {
+  const info = await pdf.renderPage(pageId);
+  if (!info) return null;
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
@@ -200,17 +213,34 @@ async function goToPage(pageId) {
     : null;
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
-    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, yLock, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
+    const focused = document.body.classList.contains('is-focus');   // 읽기 모드에서는 틀이 화면에 고정돼 스크롤과 무관하다
+    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, yLock, focus: focused, frame: { left: r.left, top: r.top + (focused ? 0 : window.scrollY), width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
   }
   $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
   updateProgress();
   renderPanel();
-  // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
-  // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
-  if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
-  await sleep(config.pageSettleMs);
-  if (measuring && info.supported && !document.hidden) beginSegment();
+  return info;
+}
+
+// ---------- 읽기 모드 (?focus=1, 개발용 시험) ----------
+// 측정하는 동안 PDF를 화면 가운데로 띄운다. 왜: 왼쪽 아래 지면은 웹캠(화면 위 가운데)에서 멀어
+// 눈이 비스듬히 찍히고 고개도 돌아가 시선 추정이 더 부정확했다. 가운데·정면이면 둘 다 줄어든다.
+// 자리를 옮기면 줄 위치가 바뀌므로 다시 그린 뒤 첫 줄 맞춤을 한다. 점수 계산은 그대로다.
+async function setFocus(on) {
+  on = focusMode && on && pdf?.mode === 'reflow' && currentPage > 0;
+  if (on === document.body.classList.contains('is-focus')) return false;
+  document.body.classList.toggle('is-focus', on);
+  $('navFocusExitBtn').hidden = !on;
+  if (on) document.documentElement.style.setProperty('--focus-w', `${pdf.layout.columnPx + 96}px`);
+  await showPage(currentPage);   // 새 자리에 맞춰 다시 그린다 (줄 상자·글 왼쪽 끝이 바뀐다)
+  return true;
+}
+/** 읽기 모드에서 나가며 측정을 멈춘다 (Esc · 나가기 버튼). 다시 읽으려면 "측정 재개". */
+async function leaveFocus() {
+  if (!document.body.classList.contains('is-focus') || calibration.active) return;
+  endSegment('manual_stop'); measuring = false; updateMeasureBtn();
+  await setFocus(false);
 }
 
 async function closeDocument() {
@@ -219,6 +249,7 @@ async function closeDocument() {
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
   auxPages.clear(); gazeSweep = null;
+  document.body.classList.remove('is-focus'); $('navFocusExitBtn').hidden = true;
   if (pdf) await pdf.close();
   $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
   $('pageScore').textContent = '–'; $('pageStatus').textContent = 'PDF를 열면 측정이 시작됩니다'; $('pageStatus').className = 'status';
@@ -373,6 +404,7 @@ async function runCalibration() {
   if (result.status === 'done') {
     gazeFit = result.fit; gazeReference = result.reference; $('recenterBtn').disabled = false;
     gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
+    await setFocus(true);   // 읽기 모드면 가운데로 옮겨 다시 그린 뒤 첫 줄을 맞춘다
     if (await anchorFirstLine() === 'aborted') return 'aborted';
   }
   else clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
@@ -468,13 +500,16 @@ $('recenterBtn').addEventListener('click', async () => {
 });
 $('camStopBtn').addEventListener('click', async () => {
   endSegment('manual_stop'); measuring = false; clearCalibration(); resetLight();
+  await setFocus(false);
   await stopGaze();
   if (tracker) await tracker.stop();
   updateCamBadge(false); updateMeasureBtn(); $('calibrateBtn').disabled = true;
 });
-$('measureToggleBtn').addEventListener('click', () => {
-  if (measuring) { endSegment('manual_stop'); measuring = false; }
-  else { measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment(); }
+$('measureToggleBtn').addEventListener('click', async () => {
+  if (measuring) { endSegment('manual_stop'); measuring = false; updateMeasureBtn(); await setFocus(false); return; }
+  // 읽기 모드로 다시 들어가면 줄 위치가 바뀌므로 첫 줄부터 맞춘다
+  if (await setFocus(!!gazeFit) && gazeFit && await anchorFirstLine() === 'aborted') return;
+  measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment();
   updateMeasureBtn();
 });
 function updateMeasureBtn() { $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개'; }
@@ -533,6 +568,14 @@ $('searchInput').addEventListener('keydown', async (e) => {
   setMsg('viewerMsg', `"${e.target.value.trim()}"을(를) 찾지 못했습니다`, '');
 });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
+// 읽기 모드: Esc로 나가기, ←/→ · PageUp/PageDown으로 쪽 넘기기 (지면 밖 버튼이 가려지므로)
+document.addEventListener('keydown', (e) => {
+  if (!document.body.classList.contains('is-focus') || calibration.active || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'Escape') { e.preventDefault(); leaveFocus(); }
+  else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(currentPage + 1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(currentPage - 1); }
+});
+$('navFocusExitBtn').addEventListener('click', leaveFocus);
 
 // ---------- 진행선: 문서 안 현재 위치. 첫 쪽 = 왼쪽 끝(0%), 마지막 쪽 = 오른쪽 끝(100%) ----------
 function updateProgress() {

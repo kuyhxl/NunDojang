@@ -32,9 +32,24 @@ export const REFLOW_20 = Object.freeze({
   padBottomPx: 20
 });
 
-/** 글자 크기(13·20)로 재배치 설정을 고른다. 모르는 값은 기본 13px판. */
+// 더 큰 시험판 (개발용 — ?reflow=24). 읽기 모드(?focus=1)에서 지면을 화면 가운데에 띄울 때 쓰려고 만들었다.
+// 크기: 1512×828 화면 가운데에 놓으면 쪽 높이 24 + 12×48 + 24 = 624px → 위 102px · 아래 726px로
+//      아래 떠 있는 막대(화면 아래 약 84px)에 가리지 않는다. 한 줄 글자 수(한글 약 40자)는 13·20px판과 같다.
+//      읽기 모드가 아니면 틀(약 880px)보다 넓어 가로 스크롤이 생긴다.
+export const REFLOW_24 = Object.freeze({
+  ...REFLOW,
+  version: 'reflow-24px/0.1.0-dev',
+  fontPx: 24,
+  lineHeightPx: 48,
+  columnPx: 960,
+  padTopPx: 24,
+  padBottomPx: 24
+});
+
+/** 글자 크기(13·20·24)로 재배치 설정을 고른다. 모르는 값은 기본 13px판. */
 export function reflowLayout(size) {
-  return Number(size) === 20 ? REFLOW_20 : REFLOW;
+  const n = Number(size);
+  return n === 24 ? REFLOW_24 : n === 20 ? REFLOW_20 : REFLOW;
 }
 
 const MARK = /^(\d+\.\s|\d+\.\d+\s|\[\d+\](?:\s|$)|[•·\-–]\s|\([가-힣]\)|[①-⑳])/;   // 목록·참고문헌 항목의 시작
