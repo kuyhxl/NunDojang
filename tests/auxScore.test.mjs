@@ -2,7 +2,7 @@
 // 합성 시선으로 "수식이 의도한 대로 동작하는가"만 본다. 실제 사람 눈으로 검증한 값이 아니다.
 
 import assert from 'node:assert/strict';
-import { createGazeSweepCounter, sweepOptionsFor } from '../web/modules/gazeSweep.js';
+import { createGazeSweepCounter, sweepOptionsFor, nextLineAfterSweep, createLineLocker } from '../web/modules/gazeSweep.js';
 import { expectedDetectableSweeps, auxScore, expectedReturnSweeps, AUX_WEIGHT_RAMP } from '../web/modules/pageScoring.js';
 
 const LAYOUT = { columnPx: 800, lineHeightPx: 40 };
@@ -118,6 +118,62 @@ test('auxScore: 개수 ÷ 기대 × 100, 넘쳐도 자르지 않음, 기대 0이
   assert.equal(auxScore(5, 4.5), (5 / 4.5) * 100);   // 가중 분모는 소수일 수 있다
   assert.equal(auxScore(-1, 5), null);
   assert.equal(auxScore(1.5, 5), null);
+});
+
+test('nextLineAfterSweep: 긴 줄 뒤에서는 한 줄씩', () => {
+  const w = [700, 700, 700, 700];
+  assert.equal(nextLineAfterSweep(0, w, 800), 1);
+  assert.equal(nextLineAfterSweep(2, w, 800), 3);
+  assert.equal(nextLineAfterSweep(3, w, 800), 3);   // 마지막 줄을 넘지 않는다
+});
+
+test('nextLineAfterSweep: 짧은 줄에 있다가 잡히면 다음 긴 줄을 끝낸 것으로 보고 그 다음 줄로', () => {
+  const w = [700, 120, 700, 90, 150, 700, 600];   // 252px 미만이 짧은 줄
+  assert.equal(nextLineAfterSweep(0, w, 800), 1);
+  assert.equal(nextLineAfterSweep(1, w, 800), 3);   // 1(짧음) 건너뛰고 2를 끝냄 → 3
+  assert.equal(nextLineAfterSweep(3, w, 800), 6);   // 3·4(짧음) 건너뛰고 5를 끝냄 → 6
+});
+
+test('nextLineAfterSweep: 남은 줄이 모두 짧으면 한 줄만, 빈 쪽은 0', () => {
+  assert.equal(nextLineAfterSweep(1, [700, 100, 100, 100], 800), 2);
+  assert.equal(nextLineAfterSweep(0, [], 800), 0);
+  assert.equal(nextLineAfterSweep(9, [700, 700], 800), 1);
+});
+
+/** 시선 표본 넣기 도우미: [시각ms, x] 목록 → 줄이 바뀐 기록 */
+function feed(locker, pts) { const out = []; for (const [t, x] of pts) { const r = locker.push({ tMs: t, xPx: x, yPx: 500, valid: true }); if (r) out.push(r); } return out; }
+const still = (t0, t1, x) => { const a = []; for (let t = t0; t <= t1; t += 40) a.push([t, x]); return a; };
+
+test('줄 추적기: 긴 줄 줄바꿈으로 한 줄씩 넘기고 읽기 속도를 잰다', () => {
+  const L = createLineLocker({ lineWidths: [700, 700, 700], layout: LAYOUT, textLeftPx: 600 });
+  const steps = feed(L, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 4000, 1250), [4040, 620]]);
+  assert.deepEqual(steps.map((s) => [s.from, s.to, s.cause]), [[0, 1, 'sweep'], [1, 2, 'sweep']]);
+  assert.equal(L.line, 2);
+  assert.ok(L.speed > 300 && L.speed < 400);   // 700px를 약 2초에
+});
+
+test('줄 추적기: 짧은 줄에 오래 머물면 다음 줄로 (끝에서 두 번째 줄이 짧아도 마지막 줄에 도착)', () => {
+  const L = createLineLocker({ lineWidths: [700, 177, 749], layout: LAYOUT, textLeftPx: 600 });
+  const steps = feed(L, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 5000, 700)]);
+  // 177px ÷ 기본 250px/s(아직 잰 속도가 2초 → 350px/s) + 1.5초 ≈ 2초 뒤 머묾 넘김
+  assert.deepEqual(steps.map((s) => [s.from, s.to, s.cause]), [[0, 1, 'sweep'], [1, 2, 'dwell']]);
+  assert.equal(L.line, 2);
+});
+
+test('줄 추적기: 긴 줄에서는 머물러도 넘기지 않고, 마지막 줄을 넘지 않는다', () => {
+  const L = createLineLocker({ lineWidths: [700, 700], layout: LAYOUT, textLeftPx: 600 });
+  assert.deepEqual(feed(L, still(0, 20000, 900)), []);
+  const M = createLineLocker({ lineWidths: [120, 130], layout: LAYOUT, textLeftPx: 600 });
+  const steps = feed(M, still(0, 20000, 700));
+  assert.deepEqual(steps.map((s) => s.to), [1]);
+  assert.equal(M.line, 1);
+});
+
+test('줄 추적기: 무효 표본은 무시', () => {
+  const L = createLineLocker({ lineWidths: [120, 700], layout: LAYOUT, textLeftPx: 600 });
+  assert.equal(L.push({ tMs: 0, xPx: 700, valid: false }), null);
+  assert.equal(L.push(null), null);
+  assert.equal(L.line, 0);
 });
 
 console.log(`\n${pass} 통과, ${fail} 실패`);

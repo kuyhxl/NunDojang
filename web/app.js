@@ -10,7 +10,7 @@ import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './mo
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
-import { createGazeSweepCounter, sweepOptionsFor } from './modules/gazeSweep.js';
+import { createGazeSweepCounter, sweepOptionsFor, createLineLocker } from './modules/gazeSweep.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -19,7 +19,11 @@ import { createGazeLog, gazeLogRow } from './modules/gazeLog.js';
 
 const $ = (id) => document.getElementById(id);
 // ?reflow=20 → 큰 글자 시험판(개발용). 없으면 기본 13px판.
-const reflowParam = Number(new URLSearchParams(location.search).get('reflow'));
+const urlParams = new URLSearchParams(location.search);
+const reflowParam = Number(urlParams.get('reflow'));
+// ?ylock=1 → 세로 고정 표시(개발용 시험): 물방울 세로는 지금 줄 밑선에 두고 가로만 시선을 따라간다.
+// 줄은 시선 x 줄바꿈(gazeSweep.js)으로 넘긴다. 표시 전용이며 점수에는 영향이 없다.
+const yLock = urlParams.has('ylock');
 const config = reflowParam === 20 ? Object.freeze({ ...DEFAULT_CONFIG, reflowSize: 20 }) : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
@@ -43,6 +47,7 @@ let signaturePng = null, signatureMethod = null;
 const graph = { iris: [], ear: [], max: 300 };
 const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
+if (yLock) eyeGlass.setLineAnchor(1);   // 줄 밑선
 const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview') });
 let gazeTracker = null;    // 시선 좌표 추정기. A의 영상을 함께 읽으며 물방울 표시에만 쓰고 점수에는 쓰지 않는다
 let latestGaze = null;     // 추정기의 가장 최근 출력
@@ -56,6 +61,7 @@ let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 �
 // 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
 const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
+let lineLocker = null;     // 세로 고정 표시(?ylock=1)에서 물방울 줄을 넘기는 추적기 (측정 여부와 상관없이 돈다)
 let driftSince = null, driftWarned = false;
 const POSE_DRIFT_WARN_MS = 2000;
 const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
@@ -189,9 +195,12 @@ async function goToPage(pageId) {
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
   gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
+  lineLocker = yLock && pdf.mode === 'reflow'
+    ? createLineLocker({ lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx() })
+    : null;
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
-    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
+    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, yLock, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
   }
   $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
@@ -262,6 +271,15 @@ function logAuxScore(pageId, reason) {
   const aux = auxScoreOf(pageId);
   if (aux) gazeLog?.meta({ type: 'auxScore', reason, ...aux });
 }
+/** 세로 고정 표시: 줄바꿈이 잡히거나 짧은 줄에 충분히 머물면 물방울을 다음 줄로 옮긴다 (createLineLocker). */
+function lockLine(g) {
+  if (!lineLocker || !gazeFit || calibration.active || !g?.valid || g.rawXNorm == null) return;
+  const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
+  const step = lineLocker.push({ tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true });
+  if (!step) return;
+  eyeGlass.setLine(step.to);
+  gazeLog?.meta({ type: 'lineLock', pageId: currentPage, from: step.from, to: step.to, cause: step.cause, speed: Math.round(lineLocker.speed), tMs: g.tMs });
+}
 /** 측정 구간이 열려 있을 때만 시선 x 줄바꿈을 센다 (공식 점수와 같은 시간 범위). */
 function countGazeSweep(g) {
   if (!gazeSweep || !segmentOpen || !store || calibration.active || !g?.valid || g.rawXNorm == null) return;
@@ -329,7 +347,7 @@ async function startGaze() {
     gazeTracker ??= await createGazeTracker({
       videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
       options: { shareVideo: true },
-      onGaze: (g) => { latestGaze = g; countGazeSweep(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
+      onGaze: (g) => { latestGaze = g; countGazeSweep(g); lockLine(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
       onError: handleGazeError
     });
     await gazeTracker.start();
@@ -476,7 +494,7 @@ function warnIfPoseDrifted(sample, frame) {
 function currentGaze() {
   if (!gazeFit) return null;
   const g = latestGaze;
-  if (g?.calibrated && Number.isFinite(g.xPx) && Number.isFinite(g.yPx)) shownGaze = { x: g.xPx, y: gazeFit.yUsable ? g.yPx : null };
+  if (g?.calibrated && Number.isFinite(g.xPx) && Number.isFinite(g.yPx)) shownGaze = { x: g.xPx, y: gazeFit.yUsable && !yLock ? g.yPx : null };   // 세로 고정이면 줄에 둔다
   return shownGaze;
 }
 
@@ -492,7 +510,7 @@ function handleSample(sample) {
   const segmentId = `seg-${segmentCounter}`;
   store.acceptSample({ sample, pageId: currentPage, segmentId });
   const events = detector.push({ sample, pageId: currentPage, segmentId });
-  if (events.length) { const r = store.acceptEvents(events); if (r.accepted) eyeGlass.advance(r.accepted); }
+  if (events.length) { const r = store.acceptEvents(events); if (r.accepted && !yLock) eyeGlass.advance(r.accepted); }   // 세로 고정은 시선 x 줄바꿈으로 넘긴다
   throttledRender();
 }
 

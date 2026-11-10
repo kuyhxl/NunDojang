@@ -64,3 +64,81 @@ export function sweepOptionsFor(layout, textLeftPx) {
     minDyPx: -layout.lineHeightPx
   };
 }
+
+// ---------------------------------------------------------------- 세로 고정 표시(?ylock=1)용 줄 추적
+/** 줄바꿈을 "만들 만한" 줄의 최소 폭: 단 폭의 31.5% (가중 분모 19~44%의 가운데). 800px 단 → 252px */
+export const LOCK_LONG_LINE_RATIO = 0.315;
+
+/**
+ * 줄바꿈이 검출됐을 때 넘어갈 줄 번호.
+ * 짧은 줄 뒤 줄바꿈은 잘 안 잡히므로, 검출된 줄바꿈은 "지금 줄부터 처음 나오는 긴 줄을 방금 끝냈다"는 뜻으로 본다.
+ * 예) 긴 줄 0 → 짧은 줄 1 → 긴 줄 2: 1에 있다가 줄바꿈이 잡히면 2를 끝낸 것으로 보고 3으로 간다.
+ * @param {number} current 지금 줄 번호 (0부터)
+ * @param {number[]} lineWidths 글줄 폭
+ * @param {number} columnPx 단 폭
+ * @returns {number} 새 줄 번호 (마지막 줄을 넘지 않는다)
+ */
+export function nextLineAfterSweep(current, lineWidths, columnPx, ratio = LOCK_LONG_LINE_RATIO) {
+  const n = Array.isArray(lineWidths) ? lineWidths.length : 0;
+  if (n === 0) return 0;
+  const last = n - 1;
+  const cur = Math.min(Math.max(0, current | 0), last);
+  const min = ratio * columnPx;
+  for (let j = cur; j < last; j++) if (lineWidths[j] >= min) return j + 1;
+  return Math.min(cur + 1, last);   // 남은 줄이 모두 짧으면 한 줄만
+}
+
+/** 짧은 줄 머묾 넘김의 여유 시간: 줄 폭 ÷ 읽기 속도 + 이만큼 지나면 다음 줄로 */
+export const LOCK_DWELL_MARGIN_MS = 1500;
+/** 읽기 속도를 아직 못 잰 동안 쓰는 값: 초당 단 폭의 31.25% (800px 단 → 250px/s, 실측 190~350px/s) */
+export const LOCK_DEFAULT_SPEED_RATIO = 0.3125;
+
+/**
+ * 세로 고정 표시(?ylock=1)의 줄 추적기. 쪽마다 새로 만든다.
+ * - 줄바꿈이 잡히면 nextLineAfterSweep으로 넘긴다 (짧은 줄 뒤 놓친 줄바꿈 보완)
+ * - 짧은 줄에 "줄 폭 ÷ 읽기 속도 + 1.5초" 넘게 머물면 다음 줄로 넘긴다
+ *   (짧은 줄 뒤 줄바꿈은 안 잡히므로, 끝에서 두 번째 줄이 짧으면 마지막 줄로 갈 방법이 없었다)
+ * - 읽기 속도는 긴 줄 하나를 끝내고 한 줄 넘어간 시간으로 잰다 (중간값)
+ * 실측(2026-11-10 20:49 consent 4쪽): 도착 줄 10·11·12·7 → 11·12·12·7. 짧은 줄을 천천히 읽으면 최대 한 줄 앞설 수 있다.
+ * @param {object} o
+ * @param {number[]} o.lineWidths 글줄 폭
+ * @param {{columnPx:number, lineHeightPx:number}} o.layout
+ * @param {number} o.textLeftPx 글 왼쪽 끝의 화면 x
+ */
+export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs = LOCK_DWELL_MARGIN_MS }) {
+  const widths = Array.isArray(lineWidths) ? lineWidths : [];
+  const last = Math.max(widths.length - 1, 0);
+  const longMin = LOCK_LONG_LINE_RATIO * layout.columnPx;
+  const defaultSpeed = LOCK_DEFAULT_SPEED_RATIO * layout.columnPx;   // px/s
+  const counter = createGazeSweepCounter(sweepOptionsFor(layout, textLeftPx));
+  const speeds = [];
+  let line = 0;
+  let enterMs = null;   // 지금 줄에 들어온 시각 (첫 표본에서 정한다)
+
+  function speed() {
+    if (!speeds.length) return defaultSpeed;
+    const s = [...speeds].sort((a, b) => a - b);
+    return s[s.length >> 1];
+  }
+
+  /** @returns {null | {from:number, to:number, cause:'sweep'|'dwell'}} 줄이 바뀌면 그 내용 */
+  function push(sample) {
+    if (!sample?.valid || !Number.isFinite(sample.tMs)) return null;
+    const t = sample.tMs;
+    if (enterMs === null) enterMs = t;
+    if (counter.push(sample)) {
+      const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx);
+      const dt = (t - enterMs) / 1000;
+      if (to === from + 1 && widths[from] >= longMin && dt > 0.5) speeds.push(widths[from] / dt);
+      line = to; enterMs = t;
+      return to !== from ? { from, to, cause: 'sweep' } : null;
+    }
+    if (line < last && widths[line] < longMin && t - enterMs > (widths[line] / speed()) * 1000 + dwellMarginMs) {
+      const from = line; line += 1; enterMs = t;
+      return { from, to: line, cause: 'dwell' };
+    }
+    return null;
+  }
+
+  return { push, get line() { return line; }, get speed() { return speed(); } };
+}
