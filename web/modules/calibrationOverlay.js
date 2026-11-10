@@ -6,6 +6,9 @@ export const DARK_MESSAGE = '카메라에 얼굴이 어둡게 보여요. 조명�
 const UNREADABLE_MESSAGE = '눈을 충분히 읽지 못했어요. 눈을 뜨고 다시 눌러 주세요';
 const FACE_FRONT_MESSAGE = '이제 고개를 정면으로 돌려 주세요';
 const ANCHOR_MESSAGE = '첫 줄 왼쪽의 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요';
+// 첫 줄 맞춤·재중심은 점 하나로 치우침 전체를 정한다. 짧으면 그 순간의 흔들림이 그대로 남는다
+// (실측: 0.9초 분량일 때 맞춘 뒤 남은 치우침 6·7·45px). 다점 보정 한 점보다 길게 본다.
+const RECENTER_COLLECT_MS = 2000;
 
 /** 현재 영상의 얼굴 영역(없으면 화면 전체) 평균 밝기를 잰다. 영상은 축소해 읽기만 하고 저장하지 않는다. */
 export function createLightMeter(video, size = 32) {
@@ -225,7 +228,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     const settleMs = collect.settleMs, durationMs = collect.settleMs + collect.durationMs;
     if (mode !== 'calibrate') {
       const t = points[0];
-      const r = await gaze.recenterTo(t.x / window.innerWidth, t.y / window.innerHeight, { durationMs, settleMs });
+      const r = await gaze.recenterTo(t.x / window.innerWidth, t.y / window.innerHeight, { durationMs: settleMs + RECENTER_COLLECT_MS, settleMs });
       if (phase !== 'collect' || run !== collectRun) return;
       if (r.ok) { beep(); finish({ status: 'recentered', reference: lastFace }); } else placeDot(UNREADABLE_MESSAGE);
       return;

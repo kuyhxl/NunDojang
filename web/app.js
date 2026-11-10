@@ -170,6 +170,7 @@ document.querySelector('.page-frame').addEventListener('wheel', (e) => {
 
 async function goToPage(pageId) {
   if (!store || pageId < 1 || pageId > pageCount) return;
+  if (calibration.active) return;   // 보정·첫 줄 맞춤 중에는 쪽을 넘기지 않는다
   // 15절 순서: 구간 닫기 → detector.reset → 렌더·줄 수 → settle → 새 구간
   endSegment('page_change');
   detector?.reset();
@@ -187,6 +188,9 @@ async function goToPage(pageId) {
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
   updateProgress();
   renderPanel();
+  // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
+  // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
+  if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
   await sleep(config.pageSettleMs);
   if (measuring && info.supported && !document.hidden) beginSegment();
 }
