@@ -5,6 +5,7 @@ import { POSE_RULES, COLLECT, HEAD_TURNS, FIT_LIMITS, evaluatePose, poseDrifted,
 export const DARK_MESSAGE = '카메라에 얼굴이 어둡게 보여요. 조명을 켜거나 밝은 곳으로 옮겨 주세요.';
 const UNREADABLE_MESSAGE = '눈을 충분히 읽지 못했어요. 눈을 뜨고 다시 눌러 주세요';
 const FACE_FRONT_MESSAGE = '이제 고개를 정면으로 돌려 주세요';
+const ANCHOR_MESSAGE = '첫 줄 왼쪽의 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요';
 
 /** 현재 영상의 얼굴 영역(없으면 화면 전체) 평균 밝기를 잰다. 영상은 축소해 읽기만 하고 저장하지 않는다. */
 export function createLightMeter(video, size = 32) {
@@ -116,7 +117,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
 
   function finish(result) {
     phase = 'idle'; root.hidden = true; video.srcObject = null;
-    hidePause(); hideTurnView(); root.classList.remove('is-light'); untapHead?.(); untapHead = null;
+    hidePause(); hideTurnView(); root.classList.remove('is-light', 'is-anchor'); untapHead?.(); untapHead = null;
     document.removeEventListener('keydown', onKey);
     const resolve = resolveRun; resolveRun = null;
     resolve?.(result);
@@ -136,11 +137,13 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     placeDot();
   }
 
-  function beginRecenter() {
-    phase = 'wait-click'; show(pointsView); skip.hidden = false; skip.textContent = '취소';
-    points = [{ x: window.innerWidth / 2, y: window.innerHeight / 2, theme: 'light' }];
+  /** target이 있으면 PDF 위의 그 자리(첫 줄 맞춤), 없으면 화면 가운데에서 치우침을 바로잡는다. */
+  function beginRecenter(target) {
+    phase = 'wait-click'; show(pointsView); skip.hidden = false; skip.textContent = target ? '건너뛰기' : '취소';
+    root.classList.toggle('is-anchor', !!target);   // PDF가 보이게 배경을 비운다
+    points = [{ x: target?.x ?? window.innerWidth / 2, y: target?.y ?? window.innerHeight / 2, theme: 'light' }];
     pointIndex = 0;
-    placeDot('가운데 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요', false);
+    placeDot(target ? ANCHOR_MESSAGE : '가운데 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요', false);
   }
 
   function placeDot(message, warn = !!message) {
@@ -220,8 +223,9 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     instruction.textContent = '점을 계속 바라봐 주세요';
     instruction.classList.remove('is-warn');
     const settleMs = collect.settleMs, durationMs = collect.settleMs + collect.durationMs;
-    if (mode === 'recenter') {
-      const r = await gaze.recenterTo(0.5, 0.5, { durationMs, settleMs });
+    if (mode !== 'calibrate') {
+      const t = points[0];
+      const r = await gaze.recenterTo(t.x / window.innerWidth, t.y / window.innerHeight, { durationMs, settleMs });
       if (phase !== 'collect' || run !== collectRun) return;
       if (r.ok) { beep(); finish({ status: 'recentered', reference: lastFace }); } else placeDot(UNREADABLE_MESSAGE);
       return;
@@ -286,8 +290,11 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     setLightWarning(on) { $('.calib-light').hidden = !on; },
     /** @returns Promise<{status:'done'|'skipped'|'aborted', fit?, reference?}> */
     run(tracker) { return open(tracker, 'calibrate', beginPose); },
-    /** 보정은 두고 치우침만 바로잡는다. @returns Promise<{status:'recentered'|'skipped'|'aborted', reference?}> */
-    recenter(tracker) { return open(tracker, 'recenter', beginRecenter); },
+    /**
+     * 보정은 두고 치우침만 바로잡는다. target({x, y}, CSS px)을 주면 PDF를 가리지 않고 그 자리에 점을 띄운다.
+     * @returns Promise<{status:'recentered'|'skipped'|'aborted', reference?}>
+     */
+    recenter(tracker, target = null) { return open(tracker, target ? 'anchor' : 'recenter', () => beginRecenter(target)); },
     feed(sample, frame) {
       const face = frame?.seq === sample.seq ? frame.faceGeometry : null;
       if (face) lastFace = { ...face };

@@ -49,6 +49,7 @@ const gazeLog = new URLSearchParams(location.search).has('gazelog')
   : null;
 let gazeFit = null;        // 보정 판정 {xErrorPx, yErrorPx, yUsable}
 let gazeReference = null;  // 보정 때의 자세
+let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 줄 맞춤 자리를 잡는 데 쓴다
 let driftSince = null, driftWarned = false;
 const POSE_DRIFT_WARN_MS = 2000;
 const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
@@ -176,7 +177,8 @@ async function goToPage(pageId) {
   const info = await pdf.renderPage(pageId);
   if (!info) return; // 늦은 렌더
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
-  eyeGlass.setLines(info.lineBoxes ?? []);
+  pageLineBoxes = info.lineBoxes ?? [];
+  eyeGlass.setLines(pageLineBoxes);
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
     gazeLog.meta({ type: 'page', pageId, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
@@ -301,8 +303,39 @@ async function runCalibration() {
   if (result.status === 'done') {
     gazeFit = result.fit; gazeReference = result.reference; $('recenterBtn').disabled = false;
     gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
+    if (await anchorFirstLine() === 'aborted') return 'aborted';
   }
   else clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
+  return result.status;
+}
+
+/** 첫 줄 맞춤 점의 화면 좌표(CSS px). 첫 줄이 화면 밖이면 보이게 굴린다. 줄이 없으면 null. */
+function firstLineTarget() {
+  const first = pageLineBoxes[0];
+  if (!first) return null;
+  const canvas = $('pdfCanvas');
+  const midY = () => canvas.getBoundingClientRect().top + first.top + first.height / 2;
+  if (midY() < 120 || midY() > window.innerHeight - 160) {
+    window.scrollBy({ top: midY() - window.innerHeight * 0.35, behavior: 'instant' });
+  }
+  const r = canvas.getBoundingClientRect();
+  return { x: r.left + first.left - 18, y: midY() };   // 첫 글자 바로 왼쪽 여백. 글자를 가리지 않는다
+}
+
+/**
+ * 보정 직후, 읽기 자세에서 PDF 첫 줄 옆 점을 보게 해 치우침을 바로잡는다.
+ * 보정 때와 읽을 때 자세가 조금 달라 생기는 세로 밀림(실측 2~6줄)을 줄인다.
+ */
+async function anchorFirstLine() {
+  const target = firstLineTarget();
+  if (!target || !gazeTracker?.running) return 'skipped';
+  document.body.classList.add('is-anchoring');
+  let result;
+  try { result = await calibration.recenter(gazeTracker, target); }
+  finally { document.body.classList.remove('is-anchoring'); }
+  if (result.status === 'aborted') return 'aborted';
+  if (result.reference) { gazeReference = result.reference; driftSince = null; driftWarned = false; }
+  gazeLog?.meta({ type: 'anchor', status: result.status, target, pageId: currentPage, offset: gazeTracker.getOffset() });
   return result.status;
 }
 

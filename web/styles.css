@@ -99,6 +99,11 @@ button, input, label { font: inherit; }
 .calib.is-light .calib-instruction.is-warn, .calib.is-light .calib-light { color: #9a4b00; }
 .calib.is-light .calib-skip { color: #141414; background: rgba(0,0,0,.04); border-color: rgba(0,0,0,.25); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 .calib.is-turning .calib-instruction { top: 12%; }
+/* 첫 줄 맞춤: PDF가 보이게 배경을 비우고, 안내는 글을 가리지 않게 아래에 띄운다 */
+.calib.is-anchor, .calib.is-anchor.is-light { background: transparent; }
+.calib.is-anchor .calib-instruction { top: auto; bottom: 32px; width: auto; max-width: min(560px, 90vw); padding: 10px 18px; border-radius: 9999px; background: var(--ink); color: var(--white); }
+.calib.is-anchor .calib-skip { top: auto; bottom: 92px; left: 50%; color: #141414; background: #fff; }
+body.is-anchoring #eyeGlass { visibility: hidden; }
 .calib-turn { position: fixed; inset: 0; pointer-events: none; color: #141414; }
 .calib-turn-arrow { --dx: 0px; --dy: 0px; position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; transform: translate(var(--dx), var(--dy)); animation: calib-turn-nudge .9s ease-in-out infinite alternate; }
 .calib-turn-arrow svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 13; stroke-linecap: round; stroke-linejoin: round; }
