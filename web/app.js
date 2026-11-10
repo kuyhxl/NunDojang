@@ -11,6 +11,10 @@ import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore, expectedReturnSweeps } from './modules/pageScoring.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
+import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
+import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
+import { createGazeTracker } from './modules/gazeTracker.js';
+import { createGazeLog, gazeLogRow } from './modules/gazeLog.js';
 
 const $ = (id) => document.getElementById(id);
 const config = DEFAULT_CONFIG;
@@ -36,12 +40,29 @@ let signaturePng = null, signatureMethod = null;
 const graph = { iris: [], ear: [], max: 300 };
 const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
+const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview') });
+let gazeTracker = null;    // 시선 좌표 추정기. A의 영상을 함께 읽으며 물방울 표시에만 쓰고 점수에는 쓰지 않는다
+let latestGaze = null;     // 추정기의 가장 최근 출력
+let shownGaze = null;      // 물방울에 마지막으로 준 좌표. 추정이 잠깐 끊겨도 이 자리를 지킨다
+const gazeLog = new URLSearchParams(location.search).has('gazelog')
+  ? createGazeLog({ onFail: (e) => setMsg('viewerMsg', `시선 기록을 저장하지 못했습니다 (${e.message}). tools/serve_local.py로 연 서버인지 확인하세요.`, 'warn') })
+  : null;
+let gazeFit = null;        // 보정 판정 {xErrorPx, yErrorPx, yUsable}
+let gazeReference = null;  // 보정 때의 자세
+let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 줄 맞춤 자리를 잡는 데 쓴다
+let driftSince = null, driftWarned = false;
+const POSE_DRIFT_WARN_MS = 2000;
+const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
+const lightMeter = createLightMeter($('camPreview'));
+const darkDetector = createDarkDetector();
+const LIGHT_CHECK_MS = 500;
+let lastLightCheckMs = -Infinity, lastLuma = null, tooDark = false;
 
 const uid = (p) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const nowMs = () => performance.now() - sessionT0;
 
 // ---------- 초기화 ----------
-$('appVersion').textContent = APP_VERSION;
+$('appVersion').textContent = gazeLog ? `${APP_VERSION} · 시선 기록 중` : APP_VERSION;
 function setModeBadge(hasDoc) { $('modeBadge').textContent = hasDoc ? MODE.toUpperCase() : '대기 중'; $('modeBadge').className = hasDoc && MODE === 'real' ? 'is-real' : ''; }
 setModeBadge(false);
 if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden = true;
@@ -149,6 +170,7 @@ document.querySelector('.page-frame').addEventListener('wheel', (e) => {
 
 async function goToPage(pageId) {
   if (!store || pageId < 1 || pageId > pageCount) return;
+  if (calibration.active) return;   // 보정·첫 줄 맞춤 중에는 쪽을 넘기지 않는다
   // 15절 순서: 구간 닫기 → detector.reset → 렌더·줄 수 → settle → 새 구간
   endSegment('page_change');
   detector?.reset();
@@ -156,17 +178,26 @@ async function goToPage(pageId) {
   const info = await pdf.renderPage(pageId);
   if (!info) return; // 늦은 렌더
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
-  eyeGlass.setLines(info.lineBoxes ?? []);
+  pageLineBoxes = info.lineBoxes ?? [];
+  eyeGlass.setLines(pageLineBoxes);
+  if (gazeLog) {
+    const r = $('eyeGlass').parentElement.getBoundingClientRect();
+    gazeLog.meta({ type: 'page', pageId, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
+  }
   $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
   $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
   updateProgress();
   renderPanel();
+  // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
+  // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
+  if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
   await sleep(config.pageSettleMs);
   if (measuring && info.supported && !document.hidden) beginSegment();
 }
 
 async function closeDocument() {
   endSegment('document_closed');
+  clearCalibration(); await stopGaze();
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
   if (pdf) await pdf.close();
@@ -194,7 +225,15 @@ function endSegment(reason) {
   segmentOpen = false;
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { endSegment('tab_hidden'); setMsg('viewerMsg', '탭이 숨겨져 측정을 일시정지했습니다. "측정 재개"를 누르세요.', 'warn'); measuring = false; updateMeasureBtn(); } });
-window.addEventListener('resize', () => { checkZoom(); if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); } });
+window.addEventListener('resize', () => {
+  checkZoom();
+  // 보정 점은 화면 좌표라 창 크기가 바뀌면 맞지 않는다.
+  if (calibration.active || gazeFit) {
+    calibration.abort('window_resize'); clearCalibration();
+    setMsg('viewerMsg', '창 크기가 바뀌어 보정이 해제됐습니다. 재보정을 눌러 주세요.', 'warn');
+  }
+  if (segmentOpen) { endSegment('window_resize'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '창 크기가 바뀌어 측정을 일시정지했습니다.', 'warn'); }
+});
 
 // ---------- 배율 확인: 13px은 브라우저 배율 100%에서만 13px이다 ----------
 function zoomLooksOff() {
@@ -212,7 +251,11 @@ function checkZoom() {
 window.visualViewport?.addEventListener('resize', checkZoom);
 
 // 개발·시험용: 재배치 결과를 콘솔에서 확인 (window.nundojang.reflow())
-window.nundojang = { reflow: () => pdf?.getReflow?.() ?? null };
+window.nundojang = {
+  reflow: () => pdf?.getReflow?.() ?? null,
+  light: () => lastLuma,
+  gaze: () => gazeTracker && { ...gazeTracker.getDiagnostics(), measurementFps: tracker?.getDiagnostics().estimatedFps ?? null }
+};
 
 // ---------- 카메라·측정 ----------
 // 트래커가 이 오류들을 보고하면 스스로 멈춘다. 앱도 구간을 닫고 '꺼짐' 상태로 맞춘다. "카메라 시작"으로 같은 세션을 이어 간다.
@@ -220,13 +263,111 @@ const TRACKER_STOPPED_CODES = new Set(['camera_lost', 'timestamp_error', 'infere
 function handleTrackerError(err) {
   setMsg('viewerMsg', `측정 오류: ${err.message}`, err.recoverable ? 'warn' : 'bad');
   if (!TRACKER_STOPPED_CODES.has(err.code)) return;
+  calibration.abort(err.code); clearCalibration(); resetLight(); void stopGaze();
   endSegment('camera_lost'); measuring = false;
   updateCamBadge(false); updateMeasureBtn();
-  $('camStopBtn').disabled = true; $('measureToggleBtn').disabled = true;
+  $('camStopBtn').disabled = true; $('measureToggleBtn').disabled = true; $('calibrateBtn').disabled = true;
+}
+
+function handleGazeError(err) {
+  setMsg('viewerMsg', `시선 추적 오류: ${err.message}`, 'warn');
+  if (err.code === 'inference_failed') { calibration.abort(err.code); clearCalibration(); }   // 이때 추정기는 스스로 멈춘다
+}
+
+/** 시선 추정기를 준비해 A가 재생 중인 영상을 읽게 한다. 실패해도 측정은 그대로 진행한다. */
+async function startGaze() {
+  setMsg('viewerMsg', '시선 모델을 불러오는 중…', '');
+  try {
+    gazeTracker ??= await createGazeTracker({
+      videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
+      options: { shareVideo: true },
+      onGaze: (g) => { latestGaze = g; gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
+      onError: handleGazeError
+    });
+    await gazeTracker.start();
+    setMsg('viewerMsg', '', '');
+  } catch (err) {
+    setMsg('viewerMsg', `시선 추적을 켜지 못해 보정 없이 진행합니다: ${err.message}`, 'warn');
+  }
+}
+
+function stopGaze() { latestGaze = null; shownGaze = null; return gazeTracker?.stop(); }
+
+function clearCalibration() {
+  gazeFit = null; shownGaze = null; gazeReference = null; driftSince = null; driftWarned = false;
+  gazeTracker?.calibration.clear();
+  $('recenterBtn').disabled = true;
+}
+
+/** 자세 맞춤과 다점 보정을 돌린다. 끝나면 'done' | 'skipped' | 'aborted'. */
+async function runCalibration() {
+  clearCalibration();
+  if (!gazeTracker?.running) return 'skipped';
+  const result = await calibration.run(gazeTracker);
+  if (result.status === 'done') {
+    gazeFit = result.fit; gazeReference = result.reference; $('recenterBtn').disabled = false;
+    gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
+    if (await anchorFirstLine() === 'aborted') return 'aborted';
+  }
+  else clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
+  return result.status;
+}
+
+/** 첫 줄 맞춤 점의 화면 좌표(CSS px). 첫 줄이 화면 밖이면 보이게 굴린다. 줄이 없으면 null. */
+function firstLineTarget() {
+  const first = pageLineBoxes[0];
+  if (!first) return null;
+  const canvas = $('pdfCanvas');
+  const midY = () => canvas.getBoundingClientRect().top + first.top + first.height / 2;
+  if (midY() < 120 || midY() > window.innerHeight - 160) {
+    window.scrollBy({ top: midY() - window.innerHeight * 0.35, behavior: 'instant' });
+  }
+  const r = canvas.getBoundingClientRect();
+  return { x: r.left + first.left - 18, y: midY() };   // 첫 글자 바로 왼쪽 여백. 글자를 가리지 않는다
+}
+
+/**
+ * 보정 직후, 읽기 자세에서 PDF 첫 줄 옆 점을 보게 해 치우침을 바로잡는다.
+ * 보정 때와 읽을 때 자세가 조금 달라 생기는 세로 밀림(실측 2~6줄)을 줄인다.
+ */
+async function anchorFirstLine() {
+  const target = firstLineTarget();
+  if (!target || !gazeTracker?.running) return 'skipped';
+  document.body.classList.add('is-anchoring');
+  let result;
+  try { result = await calibration.recenter(gazeTracker, target); }
+  finally { document.body.classList.remove('is-anchoring'); }
+  if (result.status === 'aborted') return 'aborted';
+  if (result.reference) { gazeReference = result.reference; driftSince = null; driftWarned = false; }
+  gazeLog?.meta({ type: 'anchor', status: result.status, target, pageId: currentPage, offset: gazeTracker.getOffset() });
+  return result.status;
+}
+
+function applyDarkState(dark) {
+  if (dark === tooDark) return;
+  tooDark = dark; calibration.setLightWarning(dark);
+  if (dark) setMsg('viewerMsg', DARK_MESSAGE, 'warn');
+  else if ($('viewerMsg').textContent === DARK_MESSAGE) setMsg('viewerMsg', '', '');
+}
+function resetLight() { darkDetector.reset(); lastLightCheckMs = -Infinity; lastLuma = null; applyDarkState(false); }
+function checkLight(sample) {
+  if (sample.tMs - lastLightCheckMs < LIGHT_CHECK_MS) return;
+  lastLightCheckMs = sample.tMs;
+  const frame = tracker.getDiagnostics().lastFrameDiagnostics;
+  const luma = lightMeter.read(frame?.seq === sample.seq ? frame.faceGeometry : null);
+  if (luma === null) return;
+  lastLuma = luma;
+  applyDarkState(darkDetector.update(sample.tMs, luma));
+}
+
+function startMeasuring() {
+  measuring = true; updateMeasureBtn();
+  if (tooDark) setMsg('viewerMsg', DARK_MESSAGE, 'warn');   // 보정 시작 때 지운 안내를 되살린다
+  if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment();
 }
 
 $('camStartBtn').addEventListener('click', async () => {
-  if (!store) return;
+  if (!store || calibration.active || document.body.classList.contains('is-live')) return;
   if (!window.isSecureContext || !navigator.mediaDevices) { setMsg('viewerMsg', '카메라를 쓸 수 없는 환경입니다 (localhost 또는 HTTPS에서 여세요).', 'bad'); return; }
   try {
     if (!tracker) {
@@ -237,18 +378,33 @@ $('camStartBtn').addEventListener('click', async () => {
       });
     }
     await tracker.start({ sessionId: store.getSnapshot().sessionId, sessionT0 });
-    measuring = true; updateCamBadge(true); updateMeasureBtn(); setMsg('viewerMsg', '', '');
-    $('camStopBtn').disabled = false; $('measureToggleBtn').disabled = false;
-    const info = store.getPage(currentPage);
-    if (info?.supported) beginSegment();
+    updateCamBadge(true); setMsg('viewerMsg', '', '');
+    $('camStopBtn').disabled = false; $('measureToggleBtn').disabled = false; $('calibrateBtn').disabled = false;
+    await startGaze();
+    if (await runCalibration() !== 'aborted') startMeasuring();
   } catch (err) {
     setMsg('viewerMsg', `카메라 시작 실패: ${err.message}`, 'bad');
   }
 });
+$('calibrateBtn').addEventListener('click', async () => {
+  if (calibration.active) return;
+  endSegment('manual_stop'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '', '');
+  if (await runCalibration() !== 'aborted') startMeasuring();
+});
+$('recenterBtn').addEventListener('click', async () => {
+  if (calibration.active || !gazeFit) return;
+  endSegment('manual_stop'); measuring = false; updateMeasureBtn(); setMsg('viewerMsg', '', '');
+  const result = await calibration.recenter(gazeTracker);
+  if (result.status === 'aborted') return;
+  if (result.reference) { gazeReference = result.reference; driftSince = null; driftWarned = false; }
+  gazeLog?.meta({ type: 'recenter', status: result.status, offset: gazeTracker.getOffset() });
+  startMeasuring();
+});
 $('camStopBtn').addEventListener('click', async () => {
-  endSegment('manual_stop'); measuring = false;
+  endSegment('manual_stop'); measuring = false; clearCalibration(); resetLight();
+  await stopGaze();
   if (tracker) await tracker.stop();
-  updateCamBadge(false); updateMeasureBtn();
+  updateCamBadge(false); updateMeasureBtn(); $('calibrateBtn').disabled = true;
 });
 $('measureToggleBtn').addEventListener('click', () => {
   if (measuring) { endSegment('manual_stop'); measuring = false; }
@@ -258,9 +414,31 @@ $('measureToggleBtn').addEventListener('click', () => {
 function updateMeasureBtn() { $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개'; }
 function updateCamBadge(on) { $('camBadge').innerHTML = `<span class="dot" aria-hidden="true"></span>${on ? '카메라 켜짐' : '카메라 꺼짐'}`; $('camBadge').className = on ? 'is-on' : ''; document.body.classList.toggle('is-live', on); if (!on) eyeGlass.idle(); }
 
+function warnIfPoseDrifted(sample, frame) {
+  if (!poseDrifted(gazeReference, frame?.faceGeometry)) {
+    driftSince = null;
+    if (driftWarned) { driftWarned = false; if ($('viewerMsg').textContent === POSE_DRIFT_MESSAGE) setMsg('viewerMsg', '', ''); }
+    return;
+  }
+  driftSince ??= sample.tMs;
+  if (!driftWarned && sample.tMs - driftSince >= POSE_DRIFT_WARN_MS) { driftWarned = true; setMsg('viewerMsg', POSE_DRIFT_MESSAGE, 'warn'); }
+}
+
+/** 보정된 시선의 화면 좌표(CSS px). 추정이 잠깐 끊기면 마지막 좌표를 유지한다. 보정이 없을 때만 null이다. */
+function currentGaze() {
+  if (!gazeFit) return null;
+  const g = latestGaze;
+  if (g?.calibrated && Number.isFinite(g.xPx) && Number.isFinite(g.yPx)) shownGaze = { x: g.xPx, y: gazeFit.yUsable ? g.yPx : null };
+  return shownGaze;
+}
+
 function handleSample(sample) {
+  checkLight(sample);
+  const frame = calibration.active || gazeFit ? tracker.getDiagnostics().lastFrameDiagnostics : null;
+  if (calibration.active) { calibration.feed(sample, frame); return; }
   pushGraph(sample);
-  eyeGlass.update(sample);
+  if (gazeFit) warnIfPoseDrifted(sample, frame);
+  eyeGlass.update(sample, currentGaze());
   if (!store || !segmentOpen) return;
   if (sample.tMs < segmentStartMs) return; // 구간 시작 전 프레임은 버림
   const segmentId = `seg-${segmentCounter}`;

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>눈도장 — NunDojang</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Geist:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Hanken+Grotesk:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="is-empty">
@@ -32,6 +32,8 @@
         <div class="cta-row">
           <label class="btn-white">PDF 열기 <span class="arrow">→</span><input id="pdfInput" type="file" accept="application/pdf" hidden></label>
           <button id="camStartBtn" class="btn-ghost" disabled>카메라 켜기</button>
+          <button id="calibrateBtn" class="btn-ghost only-doc" disabled>재보정</button>
+          <button id="recenterBtn" class="btn-ghost only-doc" disabled title="물방울이 통째로 밀렸을 때 가운데 점을 보고 바로잡습니다">재중심</button>
           <button id="camStopBtn" class="btn-ghost only-doc" disabled>중지</button>
           <button id="measureToggleBtn" class="btn-ghost only-doc" disabled>측정 일시정지</button>
         </div>
