@@ -44,6 +44,7 @@ const DEFAULTS = Object.freeze({
   blinkExit: 0.18,         // 이만큼 돌아오면 깜빡임이 끝난 것으로 본다
   preBlinkMs: 140,         // 깜빡임 중 붙들 좌표를 얼마나 거슬러 올라가 고를지
   maxBlinkMs: 600,         // 이보다 오래 감겨 있으면 깜빡임이 아니라 '가늘게 뜬 상태'로 본다
+  postBlinkMs: 250,        // 다시 뜬 뒤에도 이만큼은 세로를 붙든다(가로는 따라간다). 눈꺼풀이 덜 올라가 홍채가 아래로 읽힌다
   minOpenness: 0.012,      // 눈 높이/두 눈 거리. 이보다 작으면 홍채를 믿지 않는다
   minFaceScale: 0.05,      // 두 눈 거리 / 영상 폭. 너무 멀면 잡음이 커진다
   neutralSamples: 24,
@@ -125,7 +126,7 @@ export async function createGazeTracker({
   let frames = 0, invalidFrames = 0, fpsTimes = [];
   const opennessBaseline = createOpennessBaseline();
   const blinkGuard = createBlinkGuard({
-    enter: cfg.blinkEnter, exit: cfg.blinkExit, preBlinkMs: cfg.preBlinkMs, maxBlinkMs: cfg.maxBlinkMs
+    enter: cfg.blinkEnter, exit: cfg.blinkExit, preBlinkMs: cfg.preBlinkMs, maxBlinkMs: cfg.maxBlinkMs, settleMs: cfg.postBlinkMs
   });
   const drift = createDriftMonitor();
   let reseedTo = null;               // 깜빡임이 끝난 뒤 필터를 다시 앉힐 자리
@@ -240,6 +241,10 @@ export async function createGazeTracker({
       reseedTo = blink.hold ?? lastValid;
     }
     if (blink.blinking) { emitInvalid(tMs, 'blink', blink.hold ?? lastValid); return; }
+    // 다시 뜬 직후(settling): 눈꺼풀이 덜 올라가 홍채가 '아래로'만 끌린다. 세로는 감기 전 자리에 두고
+    // 가로는 바로 따른다 — 깜빡이며 줄 처음으로 돌아가는 움직임을 늦추지 않는다.
+    // 이 프레임은 보정 표본·치우침 맞춤·드리프트에는 넣지 않는다.
+    const settleY = blink.settling ? (blink.hold ?? lastValid)?.yNorm ?? null : null;
     if (f.openness < cfg.minOpenness) { emitInvalid(tMs, 'eye_too_narrow'); return; }
     if (f.faceScale < cfg.minFaceScale) { emitInvalid(tMs, 'face_too_far'); return; }
 
@@ -264,7 +269,7 @@ export async function createGazeTracker({
       reseedTo = null;
     }
     const sx = filterX.filter(pred.x, tMs);
-    const sy = filterY.filter(pred.y, tMs);
+    const sy = filterY.filter(settleY ?? pred.y, tMs);
     const snapped = cfg.snapToFixation ? fixation.push(sx, sy, tMs) : { x: sx, y: sy, fixating: false };
 
     const { width, height } = getViewport();
@@ -282,13 +287,15 @@ export async function createGazeTracker({
 
     lastValid = { xPx, yPx, xNorm, yNorm, tMs };
     blinkGuard.push(lastValid);
-    drift.push(f, tMs);
-    if (anchoring) anchoring.samples.push({ tMs, x: pred.x, y: pred.y });
-
-    if (collecting) collecting.samples.push({ tMs, features: f, nx: null, ny: null });
+    const settling = settleY !== null;
+    if (!settling) {
+      drift.push(f, tMs);
+      if (anchoring) anchoring.samples.push({ tMs, x: pred.x, y: pred.y });
+      if (collecting) collecting.samples.push({ tMs, features: f, nx: null, ny: null });
+    }
 
     emit({
-      tMs, seq: seq++, valid: true, reason: null, reasonText: null, held: false,
+      tMs, seq: seq++, valid: true, reason: settling ? 'post_blink' : null, reasonText: null, held: false,
       xPx, yPx, xNorm, yNorm,
       rawXNorm: pred.x, rawYNorm: pred.y,
       offscreen: !inside,

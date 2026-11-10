@@ -793,6 +793,43 @@ test('두 번째 깜빡임이 첫 깜빡임을 가로질러 되감지 않는다'
     `깜빡임을 건너뛰어 옛 좌표를 집었다: x=${r.hold.xNorm}`);
 });
 
+test('다시 뜬 뒤 settleMs 동안은 붙들고, 그 뒤에는 놓는다', () => {
+  const guard = createBlinkGuard({ enter: 0.34, exit: 0.18, settleMs: 250 });
+  const run = blinkRun(guard);
+  const endAt = run.find((r) => r.ended).t;
+  let t = run.at(-1).t;
+  const after = [];
+  for (let i = 0; i < 12; i++) { t += 33; after.push({ t, ...guard.update(0, t) }); }
+  const all = [...run.filter((r) => r.t >= endAt), ...after];
+  for (const r of all) {
+    assert.equal(r.settling, r.t - endAt < 250, `뜬 뒤 ${r.t - endAt}ms: settling=${r.settling}`);
+    if (r.settling) assert.ok(r.hold && r.hold.yNorm <= 0.46, '다시 뜬 직후에도 감기 전 좌표를 붙들어야 한다');
+  }
+});
+
+test('settleMs를 주지 않으면 다시 뜬 즉시 놓는다', () => {
+  const run = blinkRun(createBlinkGuard());
+  assert.ok(!run.some((r) => r.settling));
+});
+
+test('가늘게 뜬 상태로 시간 초과되면 settling 없이 바로 따라간다', () => {
+  const guard = createBlinkGuard({ maxBlinkMs: 600, settleMs: 250 });
+  let t = 0, out = null;
+  for (let i = 0; i < 25 && !out; i++) { t += 33; const r = guard.update(0.5, t); if (r.timedOut) out = r; }
+  assert.ok(out, '시간 초과가 나지 않았다');
+  assert.equal(out.blinking, false);
+  assert.equal(out.settling, false);
+});
+
+test('settling 중에 다시 감으면 새 깜빡임으로 잡는다', () => {
+  const guard = createBlinkGuard({ enter: 0.34, exit: 0.18, settleMs: 250 });
+  const run = blinkRun(guard, { holdMs: 0 });
+  const t = run.find((r) => r.ended).t + 33;
+  const r = guard.update(0.9, t);
+  assert.equal(r.blinking, true);
+  assert.equal(r.settling, false);
+});
+
 test('reset하면 상태가 비워진다', () => {
   const guard = createBlinkGuard();
   blinkRun(guard);

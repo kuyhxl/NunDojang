@@ -334,9 +334,12 @@ export function createFixationSnap({ windowMs = 180, dispersion = 0.022 } = {}) 
  * 그래서 두 가지를 한다:
  *   ① 두 기준값(enter/exit)으로 걸러 경계에서 깜빡거리지 않게 한다.
  *   ② 감기 시작 preBlinkMs 전의 좌표를 붙든다 — 끌려간 프레임을 쓰지 않는다.
+ *   ③ 다시 뜬 뒤 settleMs 동안도 붙든다(settling). exit 기준을 넘었어도 눈꺼풀이 다 올라가기 전이라
+ *      홍채가 아래로 읽힌다. 실측(2026-11-10): 뜬 직후 0~0.1초 +106px, 0.1~0.2초 +44px,
+ *      0.2~0.3초 +19px 아래로 튀었다. 줄 간격이 26px이라 0.25초면 한 줄 안으로 들어온다.
  */
-export function createBlinkGuard({ enter = 0.34, exit = 0.18, preBlinkMs = 140, maxBlinkMs = 600 } = {}) {
-  let blinking = false, hold = null, history = [], startedAt = null;
+export function createBlinkGuard({ enter = 0.34, exit = 0.18, preBlinkMs = 140, maxBlinkMs = 600, settleMs = 0 } = {}) {
+  let blinking = false, hold = null, history = [], startedAt = null, settleUntil = -Infinity;
   const before = (tMs) => {
     const want = tMs - preBlinkMs;
     for (let i = history.length - 1; i >= 0; i--) if (history[i].tMs <= want) return history[i];
@@ -352,12 +355,13 @@ export function createBlinkGuard({ enter = 0.34, exit = 0.18, preBlinkMs = 140, 
       history.push(pos);
       while (history.length > 1 && pos.tMs - history[0].tMs > preBlinkMs * 3) history.shift();
     },
-    /** @returns {{blinking:boolean, hold:object|null, ended:boolean}} */
+    /** @returns {{blinking:boolean, settling:boolean, hold:object|null, ended:boolean, timedOut:boolean}} */
     update(closure, tMs) {
       let ended = false, timedOut = false;
       if (!blinking && closure >= enter) {
         blinking = true;
         startedAt = tMs;
+        settleUntil = -Infinity;
         hold = before(tMs);
       } else if (blinking && (closure <= exit || tMs - startedAt > maxBlinkMs)) {
         // maxBlinkMs를 넘겼다면 깜빡임이 아니라 눈을 가늘게 뜬 채 머무는 것이다.
@@ -366,11 +370,12 @@ export function createBlinkGuard({ enter = 0.34, exit = 0.18, preBlinkMs = 140, 
         blinking = false;
         ended = true;
         startedAt = null;
+        settleUntil = timedOut ? -Infinity : tMs + settleMs;   // 가늘게 뜬 상태는 '다시 뜬' 게 아니다
         history = [];          // 깜빡임을 가로질러 되감지 않는다
       }
-      return { blinking, hold, ended, timedOut };
+      return { blinking, settling: !blinking && tMs < settleUntil, hold, ended, timedOut };
     },
-    reset() { blinking = false; hold = null; history = []; startedAt = null; }
+    reset() { blinking = false; hold = null; history = []; startedAt = null; settleUntil = -Infinity; }
   };
 }
 
