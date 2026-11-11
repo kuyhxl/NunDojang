@@ -252,6 +252,17 @@ body.is-focus .floatnav { z-index: 60; }
 .nav-exit:hover { background: rgba(255,255,255,.18); }
 .nav-exit .kbd { color: rgba(255,255,255,.6); font-size: 12px; }
 .nav-exit[hidden] { display: none; }
+/* 줄 단위 진행 점수(?score=lines): 줄마다 왼쪽 여백에 읽음 표식, 통과 기준 줄 밑에 점선과 안내 */
+.read-gauge { position: absolute; inset: 0; pointer-events: none; }
+.read-gauge[hidden] { display: none; }
+.read-gauge .tick { position: absolute; width: 4px; border-radius: 2px; background: rgba(20,20,20,.12); transition: background-color .3s ease, box-shadow .3s ease; }
+.read-gauge .tick.is-read { background: #1f9d63; }
+.read-gauge .tick.is-current { box-shadow: 0 0 0 2px rgba(20,20,20,.18); }
+.read-gauge .tick.is-read.is-current { box-shadow: 0 0 0 2px rgba(31,157,99,.3); }
+.read-gauge .pass-mark { position: absolute; height: 0; border-top: 1.5px dashed rgba(20,20,20,.3); }
+.read-gauge .pass-mark span { position: absolute; right: 0; top: -7px; padding: 0 6px; font-size: 11px; line-height: 12px; color: rgba(20,20,20,.55); background: #fff; white-space: nowrap; }
+.read-gauge .pass-mark.is-passed { border-top-color: rgba(31,157,99,.6); }
+.read-gauge .pass-mark.is-passed span { color: #1f9d63; }
 
 /* ---- 하단 플로팅 pill nav (사이트 실측) ---- */
 .floatnav {

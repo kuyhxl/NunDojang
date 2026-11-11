@@ -16,6 +16,9 @@ export function evaluatePage(pageState, config) {
     throw new Error(`evaluatePage: invalid pageState (${err})`);
   }
   const { pageId, lineCount, supported, acceptedEventCount, activeMs, validMs } = pageState;
+  const readLines = pageState.readLines ?? 0;
+  // 줄 단위 진행 정책(?score=lines, 개발용 시험): 점수 = 읽은 줄 ÷ 전체 줄 (lineProgress.js)
+  const lineMode = String(config.scorePolicyVersion).startsWith('line-progress/');
   const base = {
     scorePolicyVersion: config.scorePolicyVersion,
     pageId,
@@ -33,7 +36,8 @@ export function evaluatePage(pageState, config) {
   }
 
   const expectedSweeps = expectedReturnSweeps(lineCount);
-  const rawScore = expectedSweeps > 0
+  const rawScore = lineMode ? (Math.min(readLines, lineCount) / lineCount) * 100
+    : expectedSweeps > 0
     ? (acceptedEventCount / expectedSweeps) * 100            // 반올림하지 않음
     : (activeMs > 0 ? 100 : 0);                              // 한 줄짜리 쪽: 아래 품질 조건만으로 판정
   const displayScore = Math.min(config.maxDisplayScore, Math.max(0, rawScore));
@@ -57,7 +61,7 @@ export function evaluatePage(pageState, config) {
     return { ...base, rawScore, displayScore, passed: true, status: PAGE_STATUS.PASSED, reasonCodes: [] };
   }
   reasonCodes.push(REASON_CODES.SCORE_BELOW_THRESHOLD);
-  if (acceptedEventCount === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);   // L=1이면 여기까지 오지 않는다 (rawScore 100)
+  if ((lineMode ? readLines : acceptedEventCount) === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);   // L=1이면 여기까지 오지 않는다 (rawScore 100)
   return { ...base, rawScore, displayScore, passed: false, status: PAGE_STATUS.NOT_PASSED, reasonCodes };
 }
 
@@ -112,6 +116,7 @@ export function validatePageState(p) {
   if (!Number.isFinite(p.activeMs) || p.activeMs < 0) return 'activeMs';
   if (!Number.isFinite(p.validMs) || p.validMs < 0) return 'validMs';
   if (p.validMs > p.activeMs) return 'validMs_gt_activeMs';
+  if (p.readLines !== undefined && (!Number.isInteger(p.readLines) || p.readLines < 0)) return 'readLines';
   return null;
 }
 
