@@ -1,0 +1,5 @@
+dataset,feature,unit,NR_mean,IS_mean,IS_minus_NR
+WebQAmGaze,Leftward sweep candidate rate,events/second,0.4063319645731612,0.6437617894442484,0.23742982487108727
+OneStop,Mean horizontal movement,pixels/transition,300.01599889488637,326.5275980408146,26.511599145928244
+OneStop,Fixation rate,fixations/second,4.299208021596101,4.416887652938052,0.11767963134195103
+OneStop,Leftward movement fraction,fraction,0.31897495401214626,0.32189257910305735,0.0029176250909110912
