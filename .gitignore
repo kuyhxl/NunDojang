@@ -29,3 +29,6 @@ __pycache__/
 .python-version
 .ipynb_checkpoints/
 node_modules/
+
+# 세션 작업공간 (worktree 체크아웃)
+.claude/

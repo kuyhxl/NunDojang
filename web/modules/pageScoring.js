@@ -16,6 +16,9 @@ export function evaluatePage(pageState, config) {
     throw new Error(`evaluatePage: invalid pageState (${err})`);
   }
   const { pageId, lineCount, supported, acceptedEventCount, activeMs, validMs } = pageState;
+  const readLines = pageState.readLines ?? 0;
+  // 줄 단위 진행 정책(?score=lines, 개발용 시험): 점수 = 읽은 줄 ÷ 전체 줄 (lineProgress.js)
+  const lineMode = String(config.scorePolicyVersion).startsWith('line-progress/');
   const base = {
     scorePolicyVersion: config.scorePolicyVersion,
     pageId,
@@ -33,7 +36,8 @@ export function evaluatePage(pageState, config) {
   }
 
   const expectedSweeps = expectedReturnSweeps(lineCount);
-  const rawScore = expectedSweeps > 0
+  const rawScore = lineMode ? (Math.min(readLines, lineCount) / lineCount) * 100
+    : expectedSweeps > 0
     ? (acceptedEventCount / expectedSweeps) * 100            // 반올림하지 않음
     : (activeMs > 0 ? 100 : 0);                              // 한 줄짜리 쪽: 아래 품질 조건만으로 판정
   const displayScore = Math.min(config.maxDisplayScore, Math.max(0, rawScore));
@@ -57,13 +61,49 @@ export function evaluatePage(pageState, config) {
     return { ...base, rawScore, displayScore, passed: true, status: PAGE_STATUS.PASSED, reasonCodes: [] };
   }
   reasonCodes.push(REASON_CODES.SCORE_BELOW_THRESHOLD);
-  if (acceptedEventCount === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);   // L=1이면 여기까지 오지 않는다 (rawScore 100)
+  if ((lineMode ? readLines : acceptedEventCount) === 0) reasonCodes.push(REASON_CODES.NO_READING_EVENTS);   // L=1이면 여기까지 오지 않는다 (rawScore 100)
   return { ...base, rawScore, displayScore, passed: false, status: PAGE_STATUS.NOT_PASSED, reasonCodes };
 }
 
 /** L줄 쪽을 끝까지 읽을 때 기대하는 줄바꿈 수 (L−1, 최소 0). 화면 표시와 점수가 같은 값을 쓰도록 여기 하나만 둔다. */
 export function expectedReturnSweeps(lineCount) {
   return Number.isInteger(lineCount) && lineCount > 0 ? lineCount - 1 : 0;
+}
+
+// ---------------------------------------------------------------- 보조 점수 (기록 전용, 공식 점수 아님)
+// 문제: 문단 끝·제목처럼 짧은 줄 뒤에서는 눈이 그만큼만 돌아가 줄바꿈이 잘 안 잡힌다.
+//       consent.pdf(20px)를 끝까지 읽어도 39번 중 약 24~27번만 잡혀, 공식 점수(÷ L−1)는 60~70%에 그친다.
+// 안: 분모를 "잡힐 수 있는 줄바꿈 수"로 센다. 앞줄 폭으로 가중치를 준다.
+//     - 검출 최소 이동(단 폭 19%)보다 짧은 줄 → 0 (눈이 그만큼 돌아가지 않으니 원리상 못 잡는다)
+//     - 단 폭 44% 이상 → 1, 그 사이는 비례
+//     딱 자르는 기준(예: 40% 이상만 1)은 경계 근처 줄이 많은 문서에서 무너졌다
+//     (시간표 PDF는 319px 줄이 5개라 320px 기준 분모가 1로 떨어짐).
+//     앱이 줄 폭을 직접 배치하므로 분모는 추정이 아니다.
+// 실측(한 사람 기록 2회, 기준을 이 기록에 맞췄으므로 과적합 가능): 문서 전체 consent 109%, 시간표 111%, 쪽별 100~140%.
+// 팀 합의 전 실험값이다. 정책으로 바꾸려면 decisions.md 제안 + A(검출기)·B(정답 분모) 확인이 필요하다.
+export const AUX_POLICY_VERSION = 'detectable-sweeps/0.1.0-aux';
+export const AUX_WEIGHT_RAMP = Object.freeze([0.19, 0.44]);   // 단 폭 비율: 이보다 짧으면 0, 길면 1
+
+/**
+ * 잡힐 수 있는 줄바꿈 수(가중 합). 마지막 줄 뒤에는 줄바꿈이 없으므로 0..L−2번째 줄만 본다.
+ * @param {number[]} lineWidths 글줄마다 실제 글자 폭 (그림 자리 제외, 위에서부터)
+ * @param {number} columnPx 단 폭
+ */
+export function expectedDetectableSweeps(lineWidths, columnPx, ramp = AUX_WEIGHT_RAMP) {
+  if (!Array.isArray(lineWidths) || !(columnPx > 0)) return 0;
+  const a = ramp[0] * columnPx, b = ramp[1] * columnPx;
+  let sum = 0;
+  for (let i = 0; i < lineWidths.length - 1; i++) {
+    const w = lineWidths[i];
+    if (Number.isFinite(w)) sum += Math.min(1, Math.max(0, (w - a) / (b - a)));
+  }
+  return sum;
+}
+
+/** 보조 점수 (%). 반올림·상한 없음(기록 전용이라 넘친 값도 그대로 남긴다). 기대가 0이면 null. */
+export function auxScore(count, expected) {
+  if (!Number.isInteger(count) || count < 0 || !Number.isFinite(expected) || expected <= 0) return null;
+  return (count / expected) * 100;
 }
 
 /** 입력이 계약 범위를 벗어나면 이유 문자열, 정상이면 null. 조용히 보정하지 않는다. */
@@ -76,6 +116,7 @@ export function validatePageState(p) {
   if (!Number.isFinite(p.activeMs) || p.activeMs < 0) return 'activeMs';
   if (!Number.isFinite(p.validMs) || p.validMs < 0) return 'validMs';
   if (p.validMs > p.activeMs) return 'validMs_gt_activeMs';
+  if (p.readLines !== undefined && (!Number.isInteger(p.readLines) || p.readLines < 0)) return 'readLines';
   return null;
 }
 

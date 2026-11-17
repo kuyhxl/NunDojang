@@ -6,11 +6,12 @@
 //            줄 수는 앱이 직접 배치한 값이라 추정이 아니다. 11/3 회의 결정.
 //  'original' 원본 그대로 그리고 줄 수는 텍스트 y 좌표로 추정한다 (예전 방식, 비교·디버그용).
 import { resolveAssetUrls } from './config.js';
-import { REFLOW, reflowDocument, loadReflowFont, createMeasure, drawPage, textLines } from './reflow.js';
+import { reflowLayout, reflowDocument, loadReflowFont, createMeasure, drawPage, textLines } from './reflow.js';
 
 export async function createPdfManager({ canvasElement, config }) {
   const urls = resolveAssetUrls(config);
   const mode = config.viewMode === 'original' ? 'original' : 'reflow';
+  const layout = reflowLayout(config.reflowSize);   // 13px(기본) 또는 20px 시험판
   let pdfjs = null;
   let doc = null;
   let reflowed = null;     // {pages: [[{kind,text}]], sourcePages}
@@ -35,7 +36,7 @@ export async function createPdfManager({ canvasElement, config }) {
     if (mode === 'original') return { pageCount: doc.numPages, sourcePageCount: doc.numPages, mode };
 
     await loadReflowFont(urls.reflowFontUrl);
-    reflowed = await reflowDocument(doc, createMeasure(), REFLOW, { OPS: pdfjs.OPS });
+    reflowed = await reflowDocument(doc, createMeasure(layout), layout, { OPS: pdfjs.OPS });
     if (reflowed.pages.length === 0) {
       await close();
       throw Object.assign(new Error('이 PDF에서 텍스트를 찾지 못했습니다. 스캔한 이미지 PDF는 다시 배치할 수 없습니다.'), { code: 'pdf_no_text', recoverable: true });
@@ -49,7 +50,7 @@ export async function createPdfManager({ canvasElement, config }) {
     if (mode === 'reflow') {
       const lines = reflowed.pages[pageId - 1];
       if (!lines) throw new Error(`no page ${pageId}`);
-      const lineBoxes = drawPage(canvasElement, lines);
+      const lineBoxes = drawPage(canvasElement, lines, layout);
       const n = textLines(lines).length;   // 그림 자리는 세지 않는다
       return { pageId, lineCount: n > 0 ? n : null, supported: n > 0, unsupportedReason: n > 0 ? null : 'no_text', lineBoxes,
                figureCount: lines.length - n };
@@ -102,7 +103,7 @@ export async function createPdfManager({ canvasElement, config }) {
 
   /** 재배치 결과 전체 (계약 밖). 정답 파일·시험용. */
   function getReflow() {
-    return reflowed ? { version: REFLOW.version, layout: { ...REFLOW }, sourcePages: reflowed.sourcePages, pages: reflowed.pages } : null;
+    return reflowed ? { version: layout.version, layout: { ...layout }, sourcePages: reflowed.sourcePages, pages: reflowed.pages } : null;
   }
 
   async function close() {
@@ -111,5 +112,5 @@ export async function createPdfManager({ canvasElement, config }) {
     doc = null; reflowed = null;
   }
 
-  return { open, renderPage, getPageText, getReflow, close, mode };
+  return { open, renderPage, getPageText, getReflow, close, mode, layout };
 }

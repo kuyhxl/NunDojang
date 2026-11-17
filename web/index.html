@@ -129,7 +129,7 @@
         <p id="viewerMsg" class="pane-msg"></p>
 
         <!-- 문서 -->
-        <div class="page-frame"><canvas id="pdfCanvas"></canvas><div id="eyeGlass"></div></div>
+        <div class="page-frame"><canvas id="pdfCanvas"></canvas><div id="readGauge" class="read-gauge" aria-hidden="true" hidden></div><div id="eyeGlass"></div></div>
       </div>
     </main>
   </div>
@@ -142,6 +142,7 @@
       <span class="nav-link" id="navScore">점수 –</span>
       <span class="nav-link" id="appVersion"></span>
     </span>
+    <button id="navFocusExitBtn" class="nav-link nav-exit" type="button" hidden>읽기 모드 나가기 <span class="kbd">Esc</span></button>
     <button id="navSignBtn" class="btn-white nav-cta" disabled>서명 <span class="arrow">→</span></button>
   </nav>
 

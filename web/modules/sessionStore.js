@@ -20,7 +20,7 @@ export function createSessionStore({ documentId, sessionId, pageCount, config })
   function newPageState(pageId) {
     return {
       pageId, lineCount: null, supported: false, unsupportedReason: null,
-      acceptedEventCount: 0, activeMs: 0, validMs: 0,
+      acceptedEventCount: 0, activeMs: 0, validMs: 0, readLines: 0,
       blinkCount: null, earSum: 0, earN: 0
     };
   }
@@ -98,7 +98,7 @@ export function createSessionStore({ documentId, sessionId, pageCount, config })
     const p = pages.get(pageId);
     if (!p) return null;
     const state = { pageId: p.pageId, lineCount: p.lineCount, supported: p.supported,
-      acceptedEventCount: p.acceptedEventCount, activeMs: p.activeMs, validMs: p.validMs };
+      acceptedEventCount: p.acceptedEventCount, activeMs: p.activeMs, validMs: p.validMs, readLines: p.readLines };
     return {
       ...state,
       unsupportedReason: p.unsupportedReason,
@@ -106,6 +106,13 @@ export function createSessionStore({ documentId, sessionId, pageCount, config })
       meanEar: p.earN > 0 ? p.earSum / p.earN : null,
       evaluation: evaluatePage(state, config)
     };
+  }
+
+  /** 줄 단위 진행 정책: 이 쪽에서 읽음으로 판정된 줄 수 (C의 lineProgress가 쪽마다 누적한 값). 줄어들지 않는다. */
+  function setReadLines(pageId, n) {
+    const p = pages.get(pageId);
+    if (!p || !Number.isInteger(n) || n < 0) return;
+    p.readLines = Math.max(p.readLines, n);
   }
 
   function canSign() {
@@ -143,7 +150,7 @@ export function createSessionStore({ documentId, sessionId, pageCount, config })
   function getLogs() { return { samples: samples.slice(), events: events.slice() }; }
 
   return {
-    registerPage, beginSegment, endSegment, acceptSample, acceptEvents,
+    registerPage, beginSegment, endSegment, acceptSample, acceptEvents, setReadLines,
     getPage, getSnapshot, canSign,
     setConsent, setSignature, setSeal, isComplete, getLogs,
     getSignature: () => (signature ? { ...signature } : null)

@@ -22,6 +22,7 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   const pos = { x: 0.5, y: 0.25 };
   const vel = { x: 0, y: 0 };
   let raf = null, last = 0, visible = false;
+  let lineAnchor = 0.5;       // 줄 안 세로 자리 (0 위 · 0.5 가운데 · 1 밑선). ?ylock=1은 밑선
   let followsGazeY = false;   // 보정된 세로값을 쓰는 중이면 줄바꿈 후보로 세로를 움직이지 않고, 화면 전체에서 표시한다
   const unit = (v) => Math.min(1, Math.max(0, v));
 
@@ -31,7 +32,7 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
   function lineY(i) {
     if (!lines.length) return 0.25;
     const L = lines[Math.min(i, lines.length - 1)];
-    return (L.top + L.height / 2) / (container.clientHeight || 1);
+    return (L.top + L.height * lineAnchor) / (container.clientHeight || 1);
   }
 
   // 스프링 적분: 매 프레임 목표로 끌려가되 속도를 가져 지나쳤다가 돌아온다
@@ -86,6 +87,11 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
     },
     setDirectionSign(s) { directionSign = s === -1 ? -1 : 1; },
     advance(n = 1) { lineIndex = Math.min(lineIndex + n, Math.max(lines.length - 1, 0)); if (!followsGazeY) target.y = lineY(lineIndex); kick(); },
+    /** 줄 번호를 바로 정한다 (세로 고정 표시에서 시선 줄바꿈으로 줄을 옮길 때) */
+    setLine(i) { lineIndex = Math.min(Math.max(0, i | 0), Math.max(lines.length - 1, 0)); if (!followsGazeY) target.y = lineY(lineIndex); kick(); },
+    get line() { return lineIndex; },
+    /** 줄 안 세로 자리 (0~1). 0.5 가운데(기본), 1 밑선 */
+    setLineAnchor(a) { lineAnchor = Math.min(1, Math.max(0, Number(a) || 0)); if (!followsGazeY) target.y = lineY(lineIndex); kick(); },
     resetLine() { lineIndex = 0; if (!followsGazeY) target.y = lineY(0); kick(); },
     /** @param gaze 보정이 있을 때의 화면 좌표 {x, y|null} (CSS px). 없으면 홍채 x로 대강 표시한다 */
     update(sample, gaze = null) {

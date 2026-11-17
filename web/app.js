@@ -1,5 +1,5 @@
 // 앱 진입점 — C 소유. 문서·페이지·세그먼트 관리, 측정 연결, 점수·서명·봉인·내보내기.
-// 뼈대 상태: PDF 열기·페이지 이동·mock 측정 연결·점수 표시·서명·로그 내보내기까지 동작. 봉인 PDF 삽입은 단계 5.
+// 문서 열기·페이지 이동·측정 연결·점수 표시·서명·봉인 PDF 발급·로그 내보내기.
 import { DEFAULT_CONFIG, DETECTOR_CONFIG, BLINK_CONFIG, APP_VERSION, resolveAssetUrls, missingDetectorKeys } from './modules/config.js';
 import { PAGE_STATUS, SEGMENT_END_REASONS } from './modules/contracts.js';
 import { createEyeTracker, IS_MOCK as TRACKER_MOCK } from './modules/eyeTracker.js';
@@ -9,7 +9,9 @@ import { createSessionStore } from './modules/sessionStore.js';
 import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './modules/signature.js';
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
-import { formatScore, expectedReturnSweeps } from './modules/pageScoring.js';
+import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
+import { createGazeSweepCounter, sweepOptionsFor } from './modules/gazeSweep.js';
+import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore } from './modules/lineProgress.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -17,7 +19,27 @@ import { createGazeTracker } from './modules/gazeTracker.js';
 import { createGazeLog, gazeLogRow } from './modules/gazeLog.js';
 
 const $ = (id) => document.getElementById(id);
-const config = DEFAULT_CONFIG;
+// ?reflow=20 · ?reflow=24 → 큰 글자 시험판(개발용). 없으면 기본 13px판.
+const urlParams = new URLSearchParams(location.search);
+const reflowParam = Number(urlParams.get('reflow'));
+// ?ylock=1 → 세로 고정 표시(개발용 시험): 물방울 세로는 지금 줄 밑선에 두고 가로만 시선을 따라간다.
+// 줄은 시선 x 줄바꿈(gazeSweep.js)으로 넘긴다. 표시 전용이며 점수에는 영향이 없다.
+const yLock = urlParams.has('ylock');
+// ?yfix=1 → y로 줄 번호 바로잡기. 켜지 말 것 — 측정해 보고 폐기했다.
+// 세로 이득이 0.53이고 보정 후에도 오차가 ±2.1줄(줄 간격의 두 배)이라 y로는 줄을 지목할 수 없다.
+// 켜면 더 나쁜 추정이 x 줄바꿈을 덮어써 읽은 줄이 7% 줄어든다 (docs/comprehension_evidence.md 9-6).
+const yFix = urlParams.has('yfix');
+// ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
+const focusMode = urlParams.has('focus');
+// ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
+const scoreLines = urlParams.get('score') === 'lines';
+const config = reflowParam === 20 || reflowParam === 24 || scoreLines
+  ? Object.freeze({
+      ...DEFAULT_CONFIG,
+      ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
+      ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {})
+    })
+  : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
 
@@ -37,9 +59,11 @@ let currentDocName = '';
 let currentFile = null;
 let sigPad = null;
 let signaturePng = null, signatureMethod = null;
+let sealed = null;          // 발급된 봉인 {sealId, url, fileName}. 발급 뒤에는 측정을 다시 열지 않는다
 const graph = { iris: [], ear: [], max: 300 };
 const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
+if (yLock) eyeGlass.setLineAnchor(1);   // 줄 밑선
 const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview') });
 let gazeTracker = null;    // 시선 좌표 추정기. A의 영상을 함께 읽으며 물방울 표시에만 쓰고 점수에는 쓰지 않는다
 let latestGaze = null;     // 추정기의 가장 최근 출력
@@ -50,6 +74,12 @@ const gazeLog = new URLSearchParams(location.search).has('gazelog')
 let gazeFit = null;        // 보정 판정 {xErrorPx, yErrorPx, yUsable}
 let gazeReference = null;  // 보정 때의 자세
 let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 줄 맞춤 자리를 잡는 데 쓴다
+// 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
+const auxPages = new Map();
+let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
+let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
+let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
+const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
 let driftSince = null, driftWarned = false;
 const POSE_DRIFT_WARN_MS = 2000;
 const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
@@ -71,6 +101,7 @@ if (missingDetectorKeys(DETECTOR_CONFIG).length === 0) $('detectorNote').hidden 
   try {
     pdf = await createPdfManager({ canvasElement: $('pdfCanvas'), config });
     document.body.classList.toggle('is-reflow', pdf.mode === 'reflow');
+    document.body.classList.toggle('is-reflow-lg', pdf.mode === 'reflow' && pdf.layout.fontPx > 13);   // 큰 글자판: 틀을 조금 올린다
   } catch (e) {
     setMsg('viewerMsg', e.message, 'bad');
   }
@@ -82,15 +113,16 @@ async function openPdfFile(file) {
   if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) { setMsg('viewerMsg', 'PDF 파일만 열 수 있습니다.', 'bad'); return; }
   await closeDocument();
   try {
-    if (pdf.mode === 'reflow') setMsg('viewerMsg', '텍스트를 뽑아 13px로 다시 배치하는 중…', '');
+    if (pdf.mode === 'reflow') setMsg('viewerMsg', `텍스트를 뽑아 ${pdf.layout.fontPx}px로 다시 배치하는 중…`, '');
     const { pageCount: n, sourcePageCount } = await pdf.open(file);
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · 13px` : `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px` : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
     sessionT0 = performance.now(); segmentCounter = 0;
+    auxPages.clear(); readByPage.clear();
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
@@ -175,19 +207,8 @@ async function goToPage(pageId) {
   endSegment('page_change');
   detector?.reset();
   currentPage = pageId;
-  const info = await pdf.renderPage(pageId);
+  const info = await showPage(pageId);
   if (!info) return; // 늦은 렌더
-  store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
-  pageLineBoxes = info.lineBoxes ?? [];
-  eyeGlass.setLines(pageLineBoxes);
-  if (gazeLog) {
-    const r = $('eyeGlass').parentElement.getBoundingClientRect();
-    gazeLog.meta({ type: 'page', pageId, frame: { left: r.left, top: r.top + window.scrollY, width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
-  }
-  $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
-  $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
-  updateProgress();
-  renderPanel();
   // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
   // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
   if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
@@ -195,11 +216,60 @@ async function goToPage(pageId) {
   if (measuring && info.supported && !document.hidden) beginSegment();
 }
 
+/** 쪽을 그리고 그 쪽에 딸린 상태(줄 상자·물방울·줄바꿈 계수기·기록)를 새로 맞춘다. 읽기 모드로 자리를 옮길 때도 쓴다. */
+async function showPage(pageId) {
+  const info = await pdf.renderPage(pageId);
+  if (!info) return null;
+  store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
+  pageLineBoxes = info.lineBoxes ?? [];
+  eyeGlass.setLines(pageLineBoxes);
+  gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
+  lineProg = pdf.mode === 'reflow'
+    ? createLineProgress({
+      lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
+      lineCenterY: lineCenterYPx, yFix    // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+    })
+    : null;
+  renderGauge();
+  if (gazeLog) {
+    const r = $('eyeGlass').parentElement.getBoundingClientRect();
+    const focused = document.body.classList.contains('is-focus');   // 읽기 모드에서는 틀이 화면에 고정돼 스크롤과 무관하다
+    gazeLog.meta({ type: 'page', pageId, layout: pdf.layout?.version ?? null, yLock, focus: focused, frame: { left: r.left, top: r.top + (focused ? 0 : window.scrollY), width: r.width, height: r.height }, lines: info.lineBoxes ?? [] });
+  }
+  $('prevBtn').disabled = pageId <= 1; $('nextBtn').disabled = pageId >= pageCount;
+  $('pageLabel').textContent = `페이지 ${pageId}/${pageCount}`;
+  updateProgress();
+  renderPanel();
+  return info;
+}
+
+// ---------- 읽기 모드 (?focus=1, 개발용 시험) ----------
+// 측정하는 동안 PDF를 화면 가운데로 띄운다. 왜: 왼쪽 아래 지면은 웹캠(화면 위 가운데)에서 멀어
+// 눈이 비스듬히 찍히고 고개도 돌아가 시선 추정이 더 부정확했다. 가운데·정면이면 둘 다 줄어든다.
+// 자리를 옮기면 줄 위치가 바뀌므로 다시 그린 뒤 첫 줄 맞춤을 한다. 점수 계산은 그대로다.
+async function setFocus(on) {
+  on = focusMode && on && pdf?.mode === 'reflow' && currentPage > 0;
+  if (on === document.body.classList.contains('is-focus')) return false;
+  document.body.classList.toggle('is-focus', on);
+  $('navFocusExitBtn').hidden = !on;
+  if (on) document.documentElement.style.setProperty('--focus-w', `${pdf.layout.columnPx + 96}px`);
+  await showPage(currentPage);   // 새 자리에 맞춰 다시 그린다 (줄 상자·글 왼쪽 끝이 바뀐다)
+  return true;
+}
+/** 읽기 모드에서 나가며 측정을 멈춘다 (Esc · 나가기 버튼). 다시 읽으려면 "측정 재개". */
+async function leaveFocus() {
+  if (!document.body.classList.contains('is-focus') || calibration.active) return;
+  endSegment('manual_stop'); measuring = false; updateMeasureBtn();
+  await setFocus(false);
+}
+
 async function closeDocument() {
   endSegment('document_closed');
   clearCalibration(); await stopGaze();
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
+  auxPages.clear(); readByPage.clear(); gazeSweep = null; lineProg = null; renderGauge();
+  document.body.classList.remove('is-focus'); $('navFocusExitBtn').hidden = true;
   if (pdf) await pdf.close();
   $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
   $('pageScore').textContent = '–'; $('pageStatus').textContent = 'PDF를 열면 측정이 시작됩니다'; $('pageStatus').className = 'status';
@@ -212,7 +282,7 @@ async function closeDocument() {
 
 // ---------- 구간 ----------
 function beginSegment() {
-  if (!store || segmentOpen) return;
+  if (!store || segmentOpen || sealed) return;
   const segmentId = `seg-${++segmentCounter}`;
   segmentStartMs = nowMs();
   store.beginSegment({ pageId: currentPage, segmentId, tMs: segmentStartMs });
@@ -223,6 +293,98 @@ function endSegment(reason) {
   if (!SEGMENT_END_REASONS.includes(reason)) reason = 'manual_stop';
   store.endSegment({ tMs: nowMs(), reason });
   segmentOpen = false;
+  logAuxScore(currentPage, reason);
+}
+
+/** 지금 쪽 글 왼쪽 끝의 화면 x (시선 좌표와 같은 뷰포트 CSS px). 가로 스크롤이 없으면 쪽 안에서 바뀌지 않는다. */
+function textLeftPx() {
+  const first = pageLineBoxes[0];
+  return first ? $('pdfCanvas').getBoundingClientRect().left + first.left : NaN;
+}
+/** 줄 k 중심의 화면 y (시선 좌표와 같은 기준). 스크롤·읽기 모드로 자리가 바뀌므로 그때그때 잰다. */
+function lineCenterYPx(k) {
+  const box = pageLineBoxes[k];
+  return box ? $('pdfCanvas').getBoundingClientRect().top + box.top + box.height / 2 : NaN;
+}
+/** 쪽 하나의 보조 점수. 공식 점수와 나란히 비교하려고 계산만 하며 화면·봉인에는 쓰지 않는다. */
+function auxScoreOf(pageId) {
+  const p = store?.getPage(pageId);
+  if (!p || pdf?.mode !== 'reflow' || pageId !== currentPage) return null;
+  const widths = pageLineBoxes.map((b) => b.textWidth).filter(Number.isFinite);
+  const detectable = expectedDetectableSweeps(widths, pdf.layout.columnPx);
+  const gazeSweeps = auxPages.get(pageId)?.gazeSweeps ?? 0;
+  return {
+    policy: AUX_POLICY_VERSION, pageId, lineCount: p.lineCount, weightRamp: AUX_WEIGHT_RAMP,
+    expectedSweeps: expectedReturnSweeps(p.lineCount), detectableSweeps: Math.round(detectable * 100) / 100,
+    acceptedEventCount: p.acceptedEventCount, gazeSweeps,
+    officialScore: p.evaluation.rawScore,
+    auxDetector: auxScore(p.acceptedEventCount, detectable),   // A의 줄바꿈 후보 ÷ 잡힐 수 있는 줄바꿈
+    auxGaze: auxScore(gazeSweeps, detectable),                 // C의 시선 x 줄바꿈 ÷ 잡힐 수 있는 줄바꿈
+    readLines: (readByPage.get(pageId) ?? new Set()).size,
+    lineProgress: lineProgressScore((readByPage.get(pageId) ?? new Set()).size, widths.length),   // 읽은 줄 ÷ 전체 줄
+    lineWidths: widths
+  };
+}
+function logAuxScore(pageId, reason) {
+  const aux = auxScoreOf(pageId);
+  if (aux) gazeLog?.meta({ type: 'auxScore', reason, ...aux });
+}
+/**
+ * 줄 추적·읽음 판정 (lineProgress.js). 줄이 바뀌면 세로 고정 물방울을 옮기고, 측정 구간 안에서 읽음이 된 줄을 쪽마다 누적한다.
+ * 읽음 누적은 정책과 상관없이 기록(lineRead)에 남기고, 공식 점수에는 ?score=lines일 때만 쓰인다.
+ */
+function trackLine(g) {
+  if (!lineProg || !gazeFit || calibration.active || !g?.valid || g.rawXNorm == null) return;
+  const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
+  const sample = { tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true };
+  const { step, newly } = lineProg.push(sample, { credit: segmentOpen && !!store });
+  if (step) {
+    if (yLock) eyeGlass.setLine(step.to);
+    // atMs(줄을 실제로 끝낸 시각)·peak/landed·yLine은 기록 전용이다. 판정에는 쓰지 않는다.
+    // yLine이 to와 자주 어긋나면 줄바꿈 검출이 놓치고 있다는 뜻 (docs/comprehension_evidence.md 9절).
+    const sw = step.cause === 'sweep' ? lineProg.lastSweep : null;
+    gazeLog?.meta({
+      type: 'lineLock', pageId: currentPage, from: step.from, to: step.to, cause: step.cause,
+      speed: Math.round(lineProg.speed), tMs: g.tMs,
+      atMs: step.atMs ?? null, yLine: lineProg.yLineOf(sample), yFix,
+      peakX: sw ? Math.round(sw.peakX) : null, landedX: sw ? Math.round(sw.landedX) : null
+    });
+  }
+  if (newly.length) {
+    const set = readByPage.get(currentPage) ?? new Set();
+    for (const k of newly) set.add(k);
+    readByPage.set(currentPage, set);
+    store.setReadLines(currentPage, set.size);
+    gazeLog?.meta({ type: 'lineRead', pageId: currentPage, lines: newly, total: set.size, lineCount: lineProg.lineCount, tMs: g.tMs });
+    throttledRender();
+  }
+  if (step || newly.length) renderGauge();
+}
+
+/** 줄마다 읽음 표식(왼쪽 여백)과 "여기까지 읽으면 통과" 선. ?score=lines일 때만 보인다. */
+function renderGauge() {
+  const el = $('readGauge');
+  if (!scoreLines || pdf?.mode !== 'reflow' || !pageLineBoxes.length || !store) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  const read = readByPage.get(currentPage) ?? new Set();
+  const cur = lineProg?.line ?? -1;
+  const passIdx = passLineIndex(pageLineBoxes.length, config.passThreshold);
+  const passed = !!store.getPage(currentPage)?.evaluation.passed;
+  gaugePassed = passed;
+  const ticks = pageLineBoxes.map((b, k) =>
+    `<i class="tick${read.has(k) ? ' is-read' : ''}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`).join('');
+  const pb = passIdx === null ? null : pageLineBoxes[passIdx];
+  const mark = pb ? `<div class="pass-mark${passed ? ' is-passed' : ''}" style="left:${pb.left}px;width:${pb.width}px;top:${pb.top + pb.height}px"><span>${passed ? '통과 ✓' : '여기까지 읽으면 통과'}</span></div>` : '';
+  el.innerHTML = ticks + mark;
+}
+/** 측정 구간이 열려 있을 때만 시선 x 줄바꿈을 센다 (공식 점수와 같은 시간 범위). */
+function countGazeSweep(g) {
+  if (!gazeSweep || !segmentOpen || !store || calibration.active || !g?.valid || g.rawXNorm == null) return;
+  const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
+  if (gazeSweep.push({ tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true })) {
+    const a = auxPages.get(currentPage) ?? { gazeSweeps: 0 };
+    a.gazeSweeps++; auxPages.set(currentPage, a);
+  }
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { endSegment('tab_hidden'); setMsg('viewerMsg', '탭이 숨겨져 측정을 일시정지했습니다. "측정 재개"를 누르세요.', 'warn'); measuring = false; updateMeasureBtn(); } });
 window.addEventListener('resize', () => {
@@ -245,14 +407,16 @@ function zoomLooksOff() {
 function checkZoom() {
   if (pdf?.mode !== 'reflow' || !store) return;
   const off = zoomLooksOff();
-  if (off) setMsg('viewerMsg', '브라우저 배율이 100%가 아닌 것 같습니다. 글자가 13px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.', 'warn');
+  if (off) setMsg('viewerMsg', `브라우저 배율이 100%가 아닌 것 같습니다. 글자가 ${pdf.layout.fontPx}px이 되도록 ⌘0(윈도우는 Ctrl+0)으로 되돌리세요.`, 'warn');
   else if ($('viewerMsg').textContent.startsWith('브라우저 배율')) setMsg('viewerMsg', '', '');
 }
 window.visualViewport?.addEventListener('resize', checkZoom);
+if (scoreLines) $('eventCount').previousElementSibling.textContent = '읽은 줄';
 
 // 개발·시험용: 재배치 결과를 콘솔에서 확인 (window.nundojang.reflow())
 window.nundojang = {
   reflow: () => pdf?.getReflow?.() ?? null,
+  aux: () => auxScoreOf(currentPage),   // 지금 쪽의 보조 점수 (기록 전용)
   light: () => lastLuma,
   gaze: () => gazeTracker && { ...gazeTracker.getDiagnostics(), measurementFps: tracker?.getDiagnostics().estimatedFps ?? null }
 };
@@ -281,7 +445,7 @@ async function startGaze() {
     gazeTracker ??= await createGazeTracker({
       videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
       options: { shareVideo: true },
-      onGaze: (g) => { latestGaze = g; gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
+      onGaze: (g) => { latestGaze = g; countGazeSweep(g); trackLine(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
       onError: handleGazeError
     });
     await gazeTracker.start();
@@ -307,6 +471,7 @@ async function runCalibration() {
   if (result.status === 'done') {
     gazeFit = result.fit; gazeReference = result.reference; $('recenterBtn').disabled = false;
     gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
+    await setFocus(true);   // 읽기 모드면 가운데로 옮겨 다시 그린 뒤 첫 줄을 맞춘다
     if (await anchorFirstLine() === 'aborted') return 'aborted';
   }
   else clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
@@ -402,13 +567,17 @@ $('recenterBtn').addEventListener('click', async () => {
 });
 $('camStopBtn').addEventListener('click', async () => {
   endSegment('manual_stop'); measuring = false; clearCalibration(); resetLight();
+  await setFocus(false);
   await stopGaze();
   if (tracker) await tracker.stop();
   updateCamBadge(false); updateMeasureBtn(); $('calibrateBtn').disabled = true;
 });
-$('measureToggleBtn').addEventListener('click', () => {
-  if (measuring) { endSegment('manual_stop'); measuring = false; }
-  else { measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment(); }
+$('measureToggleBtn').addEventListener('click', async () => {
+  if (measuring) { endSegment('manual_stop'); measuring = false; updateMeasureBtn(); await setFocus(false); return; }
+  if (sealed) { setMsg('viewerMsg', '봉인을 발급한 뒤에는 측정을 다시 시작하지 않습니다. 새로 읽으려면 문서를 다시 여세요.', 'warn'); return; }
+  // 읽기 모드로 다시 들어가면 줄 위치가 바뀌므로 첫 줄부터 맞춘다
+  if (await setFocus(!!gazeFit) && gazeFit && await anchorFirstLine() === 'aborted') return;
+  measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment();
   updateMeasureBtn();
 });
 function updateMeasureBtn() { $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개'; }
@@ -428,7 +597,7 @@ function warnIfPoseDrifted(sample, frame) {
 function currentGaze() {
   if (!gazeFit) return null;
   const g = latestGaze;
-  if (g?.calibrated && Number.isFinite(g.xPx) && Number.isFinite(g.yPx)) shownGaze = { x: g.xPx, y: gazeFit.yUsable ? g.yPx : null };
+  if (g?.calibrated && Number.isFinite(g.xPx) && Number.isFinite(g.yPx)) shownGaze = { x: g.xPx, y: gazeFit.yUsable && !yLock ? g.yPx : null };   // 세로 고정이면 줄에 둔다
   return shownGaze;
 }
 
@@ -444,7 +613,7 @@ function handleSample(sample) {
   const segmentId = `seg-${segmentCounter}`;
   store.acceptSample({ sample, pageId: currentPage, segmentId });
   const events = detector.push({ sample, pageId: currentPage, segmentId });
-  if (events.length) { const r = store.acceptEvents(events); if (r.accepted) eyeGlass.advance(r.accepted); }
+  if (events.length) { const r = store.acceptEvents(events); if (r.accepted && !yLock) eyeGlass.advance(r.accepted); }   // 세로 고정은 시선 x 줄바꿈으로 넘긴다
   throttledRender();
 }
 
@@ -467,6 +636,14 @@ $('searchInput').addEventListener('keydown', async (e) => {
   setMsg('viewerMsg', `"${e.target.value.trim()}"을(를) 찾지 못했습니다`, '');
 });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
+// 읽기 모드: Esc로 나가기, ←/→ · PageUp/PageDown으로 쪽 넘기기 (지면 밖 버튼이 가려지므로)
+document.addEventListener('keydown', (e) => {
+  if (!document.body.classList.contains('is-focus') || calibration.active || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'Escape') { e.preventDefault(); leaveFocus(); }
+  else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(currentPage + 1); }
+  else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(currentPage - 1); }
+});
+$('navFocusExitBtn').addEventListener('click', leaveFocus);
 
 // ---------- 진행선: 문서 안 현재 위치. 첫 쪽 = 왼쪽 끝(0%), 마지막 쪽 = 오른쪽 끝(100%) ----------
 function updateProgress() {
@@ -492,11 +669,14 @@ function renderPanel() {
   if (!p) return;
   const ev = p.evaluation;
   $('lineCount').textContent = p.lineCount ?? `– (${p.unsupportedReason ?? '미지원'})`;
-  $('eventCount').textContent = p.lineCount ? `${p.acceptedEventCount} / ${expectedReturnSweeps(p.lineCount)}` : p.acceptedEventCount;   // 수락된 후보 / 기대 줄바꿈
+  $('eventCount').textContent = scoreLines
+    ? (p.lineCount ? `${p.readLines} / ${p.lineCount}` : '–')   // 읽은 줄 / 전체 줄
+    : (p.lineCount ? `${p.acceptedEventCount} / ${expectedReturnSweeps(p.lineCount)}` : p.acceptedEventCount);   // 수락된 후보 / 기대 줄바꿈
   $('pageScore').textContent = formatScore(ev);
   $('validTime').textContent = `${(p.validMs / 1000).toFixed(1)}s / ${(p.activeMs / 1000).toFixed(1)}s (${Math.round(ev.validRatio * 100)}%)`;
   $('blinkCount').textContent = p.blinkCount ?? '미설정';
   $('pageStatus').textContent = statusText(ev);
+  if (scoreLines && ev.passed !== gaugePassed) { gaugePassed = ev.passed; renderGauge(); }   // 통과 선을 '통과 ✓'로
   $('pageStatus').className = `st-${ev.status}`;
 
   const snap = store.getSnapshot();
@@ -519,7 +699,7 @@ function statusText(ev) {
     case PAGE_STATUS.UNSUPPORTED: return '이 페이지는 현재 버전에서 처리할 수 없습니다';
     case PAGE_STATUS.UNMEASURED: return '미측정';
     case PAGE_STATUS.INSUFFICIENT_QUALITY: return '측정 품질·시간 부족';
-    default: return ev.reasonCodes.includes('no_reading_events') ? '줄바꿈 후보 사건 없음' : '기준 미달';
+    default: return ev.reasonCodes.includes('no_reading_events') ? (scoreLines ? '읽은 줄 없음' : '줄바꿈 후보 사건 없음') : '기준 미달';
   }
 }
 
@@ -571,27 +751,43 @@ $('signCompleteBtn').addEventListener('click', async () => {
   setMsg('signMsg', '서명 완료. 봉인을 발급할 수 있습니다.', 'good');
   $('sealBtn').disabled = false;
 });
-function resetSignature() { signaturePng = null; signatureMethod = null; sigPad.clear(); $('consentChk').checked = false; $('signArea').hidden = true; setMsg('signMsg', '', ''); setMsg('sealMsg', '', ''); $('sealBtn').disabled = true; }
+function resetSignature() { resetSeal(); signaturePng = null; signatureMethod = null; sigPad.clear(); $('consentChk').checked = false; $('signArea').hidden = true; setMsg('signMsg', '', ''); setMsg('sealMsg', '', ''); $('sealBtn').disabled = true; }
 
 // ---------- 봉인 ----------
 $('sealBtn').addEventListener('click', async () => {
+  if (sealed) return;
+  $('sealBtn').disabled = true;
+  setMsg('sealMsg', '봉인 PDF를 만드는 중…', '');
   try {
+    endSegment('sign_requested'); measuring = false; updateMeasureBtn(); await setFocus(false);
     const sig = store.getSignature();
     const r = await issueSeal({ pdfFile: currentFile, snapshot: store.getSnapshot(), signaturePng: sig.pngDataUrl,
-      signatureMethod: sig.method, signatureImageSha256: sig.sha256, appVersion: APP_VERSION, config });
+      signatureMethod: sig.method, signatureImageSha256: sig.sha256, appVersion: APP_VERSION, config, docName: currentDocName });
     store.setSeal(r.sealPayload);
-    if (r.sealedPdfBlob) {
-      download(`${currentDocName.replace(/\.pdf$/i, '')}.gazegate-${r.sealId}.pdf`, r.sealedPdfBlob, 'application/pdf');
-      setMsg('sealMsg', `봉인 발급됨 · ${r.sealId} · ${r.issuedAt}`, 'good');
-      $('sealBtn').closest('.left-section').classList.add('is-issued');
-    } else {
-      setMsg('sealMsg', `봉인 ID ${r.sealId} 생성 (PDF 스탬프 삽입은 단계 5에서 구현 예정 — 지금은 session.json에만 기록)`, 'warn');
-      $('sealBtn').closest('.left-section').classList.add('is-issued');
-    }
-    download(`session-${r.sealId}.json`, buildSessionJson());
-    $('sealBtn').disabled = true;
-  } catch (err) { setMsg('sealMsg', err.message, 'bad'); }
+    const fileName = `${currentDocName.replace(/\.pdf$/i, '')}.gazegate-${r.sealId}.pdf`;
+    sealed = { sealId: r.sealId, url: URL.createObjectURL(r.sealedPdfBlob), fileName };
+    download(fileName, r.sealedPdfBlob, 'application/pdf');
+    download(`session-${r.sealId}.json`, buildSessionJson(), 'application/json');
+    showSealResult(r);
+    $('sealBtn').closest('.left-section').classList.add('is-issued');
+  } catch (err) {
+    setMsg('sealMsg', err.message, 'bad');
+    $('sealBtn').disabled = !store?.isComplete();
+  }
 });
+function showSealResult(r) {
+  const el = $('sealMsg');
+  el.className = 'note good';
+  el.textContent = `봉인 발급됨 · ${r.sealId} · ${r.issuedAt}${r.fontFallback ? ' (한글 글꼴을 못 불러와 시스템 글꼴로 그림)' : ''} `;
+  const view = Object.assign(document.createElement('a'), { href: sealed.url, target: '_blank', rel: 'noopener', textContent: '봉인 PDF 보기' });
+  const again = Object.assign(document.createElement('a'), { href: sealed.url, download: sealed.fileName, textContent: '다시 받기' });
+  el.append(view, ' · ', again);
+}
+function resetSeal() {
+  if (sealed?.url) URL.revokeObjectURL(sealed.url);
+  sealed = null;
+  $('sealBtn').closest('.left-section').classList.remove('is-issued');
+}
 
 // ---------- 내보내기 ----------
 function buildSessionJson() {
