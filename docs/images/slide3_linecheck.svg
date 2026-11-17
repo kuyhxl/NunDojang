@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic','Helvetica Neue',sans-serif">
+<rect width="1920" height="1080" fill="#ffffff"/>
+<text x="80" y="104" font-size="54" font-weight="800" fill="#0f172a">한 줄을 &#x27;읽었다&#x27;고 보는 조건</text>
+<text x="80" y="152" font-size="27" fill="#64748b">눈이 줄을 따라 갔는가 — 거리와 시간, 두 가지만 본다</text>
+<rect x="80" y="250" width="1060" height="500" rx="20" fill="#fff" stroke="#cbd5e1" stroke-width="3"/>
+<rect x="150" y="326" width="880" height="20" rx="10" fill="#e2e8f0"/>
+<rect x="150" y="394" width="620" height="20" rx="10" fill="#e2e8f0"/>
+<rect x="150" y="462" width="840" height="20" rx="10" fill="#e2e8f0"/>
+<rect x="150" y="530" width="300" height="20" rx="10" fill="#e2e8f0"/>
+<rect x="150" y="598" width="790" height="20" rx="10" fill="#e2e8f0"/>
+<rect x="150" y="666" width="700" height="20" rx="10" fill="#e2e8f0"/>
+<line x1="836" y1="336" x2="162" y2="404" stroke="#059669" stroke-width="3" stroke-dasharray="9 8" opacity="0.45"/>
+<line x1="634" y1="404" x2="162" y2="472" stroke="#059669" stroke-width="3" stroke-dasharray="9 8" opacity="0.45"/>
+<line x1="805" y1="472" x2="162" y2="540" stroke="#059669" stroke-width="3" stroke-dasharray="9 8" opacity="0.45"/>
+<line x1="384" y1="540" x2="162" y2="608" stroke="#059669" stroke-width="3" stroke-dasharray="9 8" opacity="0.45"/>
+<line x1="766" y1="608" x2="162" y2="676" stroke="#059669" stroke-width="3" stroke-dasharray="9 8" opacity="0.45"/>
+<line x1="162" y1="336" x2="836" y2="336" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="336" r="8" fill="#059669"/><circle cx="836" cy="336" r="8" fill="#059669"/>
+<line x1="162" y1="404" x2="634" y2="404" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="404" r="8" fill="#059669"/><circle cx="634" cy="404" r="8" fill="#059669"/>
+<line x1="162" y1="472" x2="805" y2="472" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="472" r="8" fill="#059669"/><circle cx="805" cy="472" r="8" fill="#059669"/>
+<line x1="162" y1="540" x2="384" y2="540" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="540" r="8" fill="#059669"/><circle cx="384" cy="540" r="8" fill="#059669"/>
+<line x1="162" y1="608" x2="766" y2="608" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="608" r="8" fill="#059669"/><circle cx="766" cy="608" r="8" fill="#059669"/>
+<line x1="162" y1="676" x2="696" y2="676" stroke="#059669" stroke-width="7" stroke-linecap="round"/>
+<circle cx="162" cy="676" r="8" fill="#059669"/><circle cx="696" cy="676" r="8" fill="#059669"/>
+<text x="862" y="344" font-size="23" font-weight="700" fill="#059669">줄 끝</text>
+<text x="480" y="438" font-size="23" font-weight="700" fill="#059669" opacity="0.85">점선 = 되돌림 (한 줄 끝남)</text>
+<text x="112" y="298" font-size="25" font-weight="700" fill="#64748b">초록 실선이 시선이 지나간 길</text>
+<rect x="1200" y="250" width="640" height="212" rx="20" fill="#fff" stroke="#059669" stroke-width="3"/>
+<text x="1234" y="304" font-size="31" font-weight="800" fill="#059669">조건 1 — 거리</text>
+<text x="1234" y="350" font-size="26" fill="#64748b">그 줄에 있는 동안</text>
+<text x="1234" y="386" font-size="26" fill="#64748b">시선이 가로로 움직인 폭이</text>
+<text x="1234" y="418" font-size="29" font-weight="800" fill="#0f172a">줄 폭의 40% 이상</text>
+<text x="1234" y="450" font-size="23" fill="#059669">한 점만 보거나 세로로 훑으면 탈락</text>
+<rect x="1200" y="490" width="640" height="212" rx="20" fill="#fff" stroke="#7c3aed" stroke-width="3"/>
+<text x="1234" y="544" font-size="31" font-weight="800" fill="#7c3aed">조건 2 — 시간</text>
+<text x="1234" y="590" font-size="26" fill="#64748b">그 줄에 머문 시간이</text>
+<text x="1234" y="626" font-size="26" fill="#64748b">읽을 만한 시간 이상</text>
+<text x="1234" y="658" font-size="29" font-weight="800" fill="#0f172a">(최대 2400자/분)</text>
+<text x="1234" y="690" font-size="23" fill="#7c3aed">휙 넘기면 탈락</text>
+<rect x="1200" y="730" width="640" height="78" rx="18" fill="#0f172a"/>
+<text x="1234" y="780" font-size="29" font-weight="800" fill="#fff">둘 다 넘기면 그 줄은 &#8220;읽음&#8221;</text>
+<rect x="80" y="846" width="1760" height="78" rx="18" fill="#f8fafc" stroke="#cbd5e1"/>
+<text x="118" y="896" font-size="29" fill="#0f172a">쪽 점수 = <tspan font-weight="800">읽은 줄 ÷ 전체 줄 × 100</tspan>   ·   80점 이상이면 그 쪽 통과   ·   모든 쪽을 통과해야 봉인된다</text>
+</svg>
