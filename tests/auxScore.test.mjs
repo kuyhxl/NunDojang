@@ -37,9 +37,10 @@ function countAll(samples, opts = OPTS) {
 }
 
 test('sweepOptionsFor: 이동 152px, 착지 ≤ 글 왼쪽+200px, 위로 40px 넘게 튀면 제외 (800px 단)', () => {
-  assert.deepEqual(OPTS, { minDropPx: 152, landingMaxX: 800, minDyPx: -40 });
+  assert.deepEqual(OPTS, { minDropPx: 152, landingMaxX: 800, minDyPx: -40, maxGapMs: null });
   assert.equal(sweepOptionsFor({ columnPx: 520, lineHeightPx: 26 }, 0).minDropPx, 99);
   assert.equal(sweepOptionsFor(LAYOUT, NaN).landingMaxX, null);
+  assert.equal(sweepOptionsFor(LAYOUT, 600, { maxGapMs: 250 }).maxGapMs, 250);   // 줄 때만 끊김을 본다
 });
 
 test('긴 줄만 있는 쪽: 줄바꿈 L−1번을 모두 센다', () => {
@@ -174,6 +175,37 @@ test('줄 추적기: 무효 표본은 무시', () => {
   assert.equal(L.push({ tMs: 0, xPx: 700, valid: false }), null);
   assert.equal(L.push(null), null);
   assert.equal(L.line, 0);
+});
+
+// ---- 끊김을 가로지른 이동은 줄바꿈이 아니다 (maxGapMs)
+test('줄바꿈 계수기: 추적이 끊긴 사이를 가로지른 x 이동은 세지 않는다', () => {
+  const opts = { minDropPx: 152, landingMaxX: 800, minDyPx: -40 };
+  const feedGap = (counter) => {
+    counter.push({ tMs: 0, xPx: 1350, yPx: 500, valid: true });     // 줄 끝
+    return counter.push({ tMs: 3000, xPx: 620, yPx: 500, valid: true });   // 3초 뒤, 줄 처음
+  };
+  // windowMs를 넓혀 "창 안"이라는 조건만으로는 걸러지지 않게 해 둔다
+  assert.equal(feedGap(createGazeSweepCounter({ ...opts, windowMs: 5000 })), true, '지금 기본값은 센다');
+  assert.equal(feedGap(createGazeSweepCounter({ ...opts, windowMs: 5000, maxGapMs: 250 })), false, 'maxGapMs를 주면 안 센다');
+});
+
+test('줄바꿈 계수기: 끊김이 없으면 maxGapMs를 줘도 똑같이 센다', () => {
+  const opts = { minDropPx: 152, landingMaxX: 800, minDyPx: -40 };
+  const feed = (counter) => {
+    let n = 0;
+    for (let t = 0; t <= 360; t += 40) if (counter.push({ tMs: t, xPx: 1350 - t * 2, yPx: 500, valid: true })) n++;
+    return n;
+  };
+  assert.equal(feed(createGazeSweepCounter({ ...opts, maxGapMs: 250 })), feed(createGazeSweepCounter(opts)));
+});
+
+test('줄바꿈 계수기: droppedWindows가 끊김 횟수를 센다', () => {
+  const c = createGazeSweepCounter({ minDropPx: 152, maxGapMs: 250 });
+  c.push({ tMs: 0, xPx: 900, valid: true });
+  c.push({ tMs: 100, xPx: 900, valid: true });
+  assert.equal(c.droppedWindows, 0);
+  c.push({ tMs: 2000, xPx: 900, valid: true });
+  assert.equal(c.droppedWindows, 1);
 });
 
 console.log(`\n${pass} 통과, ${fail} 실패`);

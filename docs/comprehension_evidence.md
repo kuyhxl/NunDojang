@@ -593,6 +593,88 @@ demo 문서를 assignment → paper → consent 순서로 읽으며 5개를 남�
 착지권 상대화 쪽은 `max(절대, 상대)`라서 어떤 쪽도 지금보다 엄해지지 않고, 눌림 보정이라는
 이유가 분명하다. 둘을 **따로 올려** 상대화만 먼저 합의하는 것도 방법이다(84%, 하락 없음).
 
+## 12. A(민서) 시제품 PR #14 검토와 차용 (2026-11-17, C)
+
+[PR #14](https://github.com/kuyhxl/NunDojang/pull/14) `[A] 웹캠 화면좌표 기반 다중 줄·페이지 관찰 시제품 v7.8`.
+71파일 / +32,715줄 / −0줄.
+
+### 12-1. 머지하지 않기로 한 이유
+
+| | |
+|---|---|
+| **라이선스** | `pilot-worker.js`가 WebEyeTrack(**GPL-3.0**) 빌드 산출물. `core/math.mjs`·`core/viewport.mjs`에 `SPDX-License-Identifier: GPL-3.0-or-later`. 전염성이라 묶어서 배포하면 눈도장 전체가 GPL-3.0이 된다 |
+| **덩치 대비 알맹이** | 32,715줄 중 라이선스 전문 20,161 + 번들 worker 5,028 = **77%가 벤더 산출물**. 실제 새 로직은 `.mjs` 10개 ≈ 700줄 |
+| **계약이 다름** | 화면 CSS px vs 홍채 상대위치, `captureTMs` vs `sessionT0`, 왼→오 통과 vs 오→왼 복귀. 민서님 본인이 `INTEGRATION_KO.md`에 적어 둠 |
+| **범위** | 2쪽 × 2영역 × 정확히 4줄, 16px/32px, 창 1340×680 이상, 참가자 1명 4회차 |
+
+**닫지도 않는다.** 측정 기록과 문서가 아깝고, 아래 차용 후보가 더 남아 있다.
+라이선스 결정은 [decisions.md](decisions.md) 2026-11-17 항목.
+
+### 12-2. 지금 반영한 것 — 유효 시간 회계
+
+A의 `HorizontalDetector`가 유효 시간을 어떻게 세는지 보다가 **우리 코드의 구멍 두 개**를 찾았다.
+
+```js
+// lineProgress.js — 벽시계였다. 추적이 5초 끊겨도 5초가 읽은 시간이 된다
+const timeOk = (tMs - sp.startMs) / 1000 >= sum / maxSpeed;
+
+// gazeSweep.js — 끊김 길이를 보지 않았다
+if (!valid || !Number.isFinite(xPx) || !Number.isFinite(tMs)) return false;
+```
+
+고쳤고(기본값 꺼짐, `?validtime=1`), 기록 11개로 재 봤다. 결과와 제안서는 [decisions.md 열린 제안 1](decisions.md).
+
+- 점수가 바뀐 기록 **1개 / 11개** (−16.7점). 나머지 10개는 끊김 비율 0.0%.
+- **거짓 탈락(97% vs 69%)의 원인은 아니다** — 두 기록 다 끊김 0.0%. §11이 여전히 유력하다.
+- 줄바꿈 계수기 쪽은 `windowMs = 400`이 이미 거르고 있어 **지금은 사실상 무효**다. 남긴 이유는 §11이 `windowMs`를 600으로 올리면 그때 유효해지고, `droppedWindows`가 진단에 쓰이기 때문.
+
+### 12-3. 아직 안 한 차용 후보
+
+**① 읽기 전 개인 가로 기준점 (`anchors.mjs`) — 가장 값이 크다**
+
+§11에서 내가 쓴 제안은 착지권을 **읽는 동안 관측된 x**에서 뽑는 것인데, 그건 순환이다 —
+찾으려는 것으로 기준을 만든다. A는 **읽기 전 점검점 6개(영역당 3점)**에서만 뽑는다.
+
+```
+leftCut  = (왼쪽점 중앙값 + 가운데점 중앙값) / 2
+rightCut = (가운데점 중앙값 + 오른쪽점 중앙값) / 2
+쓸 조건: 점 사이 간격 > max(24px, 2 × MAD 잡음)   ← 품질 미달이면 아예 안 쓴다
+중간 점검이 품질 미달이면 **영역별로** 초기 기준으로 되돌린다 (checkpointWithFallback)
+```
+
+주석에 `never train on reading samples or outcomes`라고 못 박아 뒀다.
+**§11 초안을 이 방식으로 바꿔 쓰는 게 맞다.** 다만 보정 화면에 점을 추가해야 해서
+A 영역과 겹치고, 공통 변경 제안이 필요하다.
+
+**② λ를 교차검증으로 고르기 (`selectRidge`)**
+
+우리 `gazeMath.fit()`은 **기저**를 leave-one-out으로 고르지만 λ는 `1e-2` 고정이다.
+A는 λ 6개(`1e-4`~`10`)를 leave-one-target-out으로 훑는다. 우리 LOO 오차가 59~72px이니 여지가 있다.
+
+**③ 순환 차단을 규율로**
+
+```js
+// Deliberately has no instructed target, trial type, expected order, or Y input.
+```
+
+검출기가 **찾아야 할 답을 못 보게** 막아 뒀다. 나도 yfix에서 같은 함정에 빠졌다 — yfix 켠
+기록으로 세로 이득을 재는 순환(§10-5). 코드가 아니라 규율이라 그대로 배울 값이 있다.
+
+**④ 기록 열** — `resultAgeMs`(처리 지연), `processingMs`, `leftEAR`/`rightEAR`.
+특히 `resultAgeMs > 250 → result_stale`. 우리는 처리 지연을 **재지 않는다**.
+
+### 12-4. 가져오지 않을 것
+
+512차원 눈 영상 특징 + WebEyeTrack worker(GPL·자산 버전 다름), 2쪽/2영역/4줄 프로토콜,
+`reference-c/reflow.mjs`(내 파일의 오래된 사본 — 들어오면 안 된다), `review/source/` upstream 사본.
+
+### 12-5. 우리가 더 나은 지점
+
+민서님이 직접 적어 두셨다 — *"같은 영역 안에서 일부 줄을 반복해도 후보가 누적될 수 있습니다.
+80%의 고유 줄을 읽었다고 확인하지 않습니다."* 우리 `lineProgress`의 `read`는 **Set**이라
+줄 번호로 중복이 제거된다. 같은 줄을 열 번 읽어도 1줄이다. 이 축에서는 우리가 낫고,
+"A 시제품이 C 점수를 대체한다"는 오해가 생기지 않게 해 둔다.
+
 ## 참고 문헌
 
 - Shubi, Meiri, Hadar, Berzak (2024). Fine-Grained Prediction of Reading Comprehension from Eye Movements. EMNLP. https://arxiv.org/abs/2410.04484

@@ -8,6 +8,11 @@
 //  - 세로는 절대 위치가 수십 px 밀려도 0.4초 안의 상대 변화는 3~5px로 정확해서 이 판단에 쓸 수 있다.
 // DOM을 쓰지 않는 순수 모듈이라 node에서 시험할 수 있다.
 
+/** 표본이 이보다 오래 끊기면 그 사이를 이어서 보지 않는다 (CSS px가 아니라 ms).
+ *  A(민서)의 측정 시제품이 같은 자리에 둔 maxGapMs 250과 같은 값이다 — 방법만 가져왔고 코드는 옮기지 않았다.
+ *  (출처: PR #14 HorizontalDetector. 그 구현은 GPL-3.0이라 제품에 넣지 않는다. docs/decisions.md 참고) */
+export const SWEEP_MAX_GAP_MS = 250;
+
 /**
  * @param {object} o
  * @param {number} o.minDropPx  이만큼 넘게 왼쪽으로 가야 줄바꿈으로 본다 (CSS px)
@@ -15,12 +20,17 @@
  * @param {number|null} [o.minDyPx=null]  착지 y − 출발 y가 이 값 이상이어야 한다 (예: −줄 간격). null이면 보지 않는다
  * @param {number} [o.windowMs=400]  이 시간 안에 일어난 이동만 본다
  * @param {number} [o.refractoryMs=700]  줄바꿈 하나를 두 번 세지 않도록 쉬는 시간
+ * @param {number|null} [o.maxGapMs=null]  표본이 이보다 오래 끊기면 창을 비운다. null이면 보지 않는다 (지금 기본값)
+ *   왜: 추적이 3초 끊긴 사이를 가로질러도 "x가 왼쪽으로 크게 갔다"가 성립해 줄바꿈이 된다.
+ *   끊김 전 최고점과 끊김 후 착지는 이어진 눈 움직임이 아니므로, 창을 비워 다음 표본부터 다시 본다.
  */
-export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx = null, windowMs = 400, refractoryMs = 700 }) {
+export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx = null, windowMs = 400, refractoryMs = 700, maxGapMs = null }) {
   if (!(minDropPx > 0)) throw new Error('createGazeSweepCounter: minDropPx must be > 0');
   let recent = [];          // 최근 windowMs 안의 유효 표본 {tMs, xPx, yPx}
   let lastSweepMs = -Infinity;
+  let lastSampleMs = null;  // 마지막 유효 표본 시각 (끊김 판정용)
   let count = 0;
+  let dropped = 0;          // 끊김 때문에 창을 비운 횟수 (진단·기록용)
   let last = null;          // 마지막 줄바꿈의 시각·위치 (진단·기록용)
 
   /**
@@ -30,6 +40,8 @@ export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx 
   function push({ tMs, xPx, yPx = null, valid }) {
     if (!valid || !Number.isFinite(xPx) || !Number.isFinite(tMs)) return false;
     const y = Number.isFinite(yPx) ? yPx : null;
+    if (maxGapMs !== null && lastSampleMs !== null && tMs - lastSampleMs > maxGapMs) { recent = []; dropped++; }
+    lastSampleMs = tMs;
     recent.push({ tMs, xPx, yPx: y });
     while (recent.length && tMs - recent[0].tMs > windowMs) recent.shift();
     if (tMs - lastSweepMs < refractoryMs) return false;
@@ -46,9 +58,10 @@ export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx 
     return true;
   }
 
-  function reset() { recent = []; lastSweepMs = -Infinity; count = 0; last = null; }
+  function reset() { recent = []; lastSweepMs = -Infinity; lastSampleMs = null; count = 0; dropped = 0; last = null; }
 
-  return { push, reset, get count() { return count; }, get lastSweep() { return last ? { ...last } : null; } };
+  return { push, reset, get count() { return count; }, get droppedWindows() { return dropped; },
+    get lastSweep() { return last ? { ...last } : null; } };
 }
 
 /** 줄바꿈으로 볼 최소 이동 폭: 단 폭의 19% (800px 단 → 152px, 520px 단 → 99px) */
@@ -61,11 +74,12 @@ export const SWEEP_LANDING_RATIO = 0.25;
  * @param {{columnPx:number, lineHeightPx:number}} layout
  * @param {number} textLeftPx 글 왼쪽 끝의 화면 x (CSS px, 시선 좌표와 같은 기준)
  */
-export function sweepOptionsFor(layout, textLeftPx) {
+export function sweepOptionsFor(layout, textLeftPx, { maxGapMs = null } = {}) {
   return {
     minDropPx: Math.round(SWEEP_DROP_RATIO * layout.columnPx),
     landingMaxX: Number.isFinite(textLeftPx) ? textLeftPx + SWEEP_LANDING_RATIO * layout.columnPx : null,
-    minDyPx: -layout.lineHeightPx
+    minDyPx: -layout.lineHeightPx,
+    maxGapMs
   };
 }
 

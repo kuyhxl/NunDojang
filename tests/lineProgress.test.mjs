@@ -145,6 +145,36 @@ test('yLineOf: lineCenterY가 없으면 null, 있으면 화면 y로 본 줄 번�
   assert.equal(on.yLineOf({ tMs: 0, xPx: LEFT, yPx: null, valid: true }), null);
 });
 
+// ---- 끊긴 시간은 읽은 시간이 아니다 (?validtime=1)
+test('maxGapMs를 주면 추적이 끊긴 사이는 읽은 시간으로 세지 않는다', () => {
+  // 한 줄(780px)을 x만 끝까지 훑되, 가운데에서 6초 끊긴다. 벽시계로는 시간 조건을 넘고 유효 시간으로는 못 넘는다.
+  const W = [780, 780];
+  const half = (from, to, t0) => {
+    const out = [];
+    for (let u = 0; u <= 400; u += 40) out.push({ tMs: t0 + u, xPx: LEFT + from + (to - from) * (u / 400), yPx: 500, valid: true });
+    return out;
+  };
+  const samples = [...half(0, 300, 0), ...half(320, 640, 6400)];   // 400ms + 6초 공백 + 400ms
+  const wall = run(W, samples).readLines;                          // 지금 기본값: 벽시계
+  const valid = run(W, samples, { maxGapMs: 250 }).readLines;      // 유효 시간
+  assert.ok(wall.length >= 1, `벽시계로는 읽음이 생겨야 한다: ${wall.join(',')}`);
+  assert.equal(valid.length, 0, `유효 시간으로는 0줄이어야 한다: ${valid.join(',')}`);
+});
+
+test('끊김이 없으면 maxGapMs를 줘도 결과가 같다', () => {
+  const { samples } = readLines(P1);                               // 40ms 간격으로 끊김 없음
+  assert.deepEqual(run(P1, samples, { maxGapMs: 250 }).readLines, run(P1, samples).readLines);
+});
+
+test('lastGroup이 벽시계·유효 시간·유효 비율을 함께 준다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, maxGapMs: 250 });
+  for (const s of readLines(P1, { to: 3 }).samples) P.push(s);
+  const g = P.lastGroup;
+  assert.ok(g && g.wallMs > 0, `lastGroup이 없다: ${JSON.stringify(g)}`);
+  assert.ok(g.elapsedMs <= g.wallMs, '유효 시간은 벽시계를 넘을 수 없다');
+  assert.ok(g.coverage > 0.9, `끊김이 없으면 유효 비율이 1에 가까워야 한다: ${g.coverage}`);
+});
+
 test('lineProgressScore / passLineIndex', () => {
   assert.equal(lineProgressScore(12, 12), 100);
   assert.equal(lineProgressScore(9, 12), 75);

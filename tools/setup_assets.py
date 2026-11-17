@@ -45,6 +45,19 @@ ASSETS = [
 FONT = ("vendor/fonts/NotoSansKR-Regular.ttf",
         "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf")
 
+# 라이선스 원문. 자산과 같은 자리에 둬서, 앱을 올리거나 건넬 때 함께 나가게 한다.
+# Apache-2.0은 재배포 시 사본 동봉을 요구하는데 MediaPipe 축약 번들에는 고지가 남아 있지 않다.
+# 요약과 확인 결과는 web/vendor/NOTICE.md.  없어도 앱은 돌아가므로 실패해도 중단하지 않는다.
+LICENSES = [
+    ("vendor/mediapipe/LICENSE", "https://www.apache.org/licenses/LICENSE-2.0.txt"),
+    ("vendor/pdfjs/LICENSE",
+     f"https://raw.githubusercontent.com/mozilla/pdf.js/v{PDFJS_VER}/LICENSE"),
+    ("vendor/pdf-lib/LICENSE",
+     f"https://raw.githubusercontent.com/Hopding/pdf-lib/v{PDFLIB_VER}/LICENSE.md"),
+    ("vendor/fonts/LICENSE",
+     "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE"),
+]
+
 
 def fetch(rel, url):
     dst = os.path.join(WEB, rel)
@@ -80,14 +93,15 @@ def main():
 
     print(f"web 폴더: {WEB}")
     ok = True
-    for rel, url in ASSETS + [FONT]:
+    optional = {FONT[0], *(rel for rel, _ in LICENSES)}
+    for rel, url in ASSETS + [FONT] + LICENSES:
         if args.check:
             exists = os.path.exists(os.path.join(WEB, rel))
             print(f"  {'있음' if exists else '없음'}   {rel}")
-            ok = ok and (exists or rel == FONT[0])
+            ok = ok and (exists or rel in optional)
         else:
             got = fetch(rel, url)
-            if rel != FONT[0]:
+            if rel not in optional:
                 ok = ok and got
     if not ok:
         print("\n일부 자산이 없습니다. docs/dependencies.md의 수동 다운로드 안내를 보세요.")

@@ -10,8 +10,8 @@ import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './mo
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
-import { createGazeSweepCounter, sweepOptionsFor } from './modules/gazeSweep.js';
-import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore } from './modules/lineProgress.js';
+import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS } from './modules/gazeSweep.js';
+import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore, LP_MAX_GAP_MS } from './modules/lineProgress.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -29,6 +29,11 @@ const yLock = urlParams.has('ylock');
 // 세로 이득이 0.53이고 보정 후에도 오차가 ±2.1줄(줄 간격의 두 배)이라 y로는 줄을 지목할 수 없다.
 // 켜면 더 나쁜 추정이 x 줄바꿈을 덮어써 읽은 줄이 7% 줄어든다 (docs/comprehension_evidence.md 9-6).
 const yFix = urlParams.has('yfix');
+// ?validtime=1 → 시간 조건을 벽시계가 아니라 유효 시간으로 센다 (개발용 시험, 팀 합의 전).
+// 왜: 지금은 추적이 끊긴 시간도 읽은 시간으로 계산돼, 줄 인정의 시간 조건이 공짜로 통과한다.
+//     줄바꿈 계수기도 끊김을 가로지른 x 이동을 줄바꿈으로 세고 있다.
+// 점수가 바뀌므로 기본값은 꺼짐이고, 합의 전에는 이 플래그로만 켠다 (docs/decisions.md 열린 제안).
+const validTime = urlParams.has('validtime');
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
@@ -223,11 +228,15 @@ async function showPage(pageId) {
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
-  gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
+  const gapMs = validTime ? SWEEP_MAX_GAP_MS : null;
+  gazeSweep = pdf.mode === 'reflow'
+    ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx(), { maxGapMs: gapMs }))
+    : null;
   lineProg = pdf.mode === 'reflow'
     ? createLineProgress({
       lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
-      lineCenterY: lineCenterYPx, yFix    // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+      lineCenterY: lineCenterYPx, yFix,   // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+      maxGapMs: validTime ? LP_MAX_GAP_MS : null
     })
     : null;
   renderGauge();
@@ -355,7 +364,12 @@ function trackLine(g) {
     for (const k of newly) set.add(k);
     readByPage.set(currentPage, set);
     store.setReadLines(currentPage, set.size);
-    gazeLog?.meta({ type: 'lineRead', pageId: currentPage, lines: newly, total: set.size, lineCount: lineProg.lineCount, tMs: g.tMs });
+    // group: 그 묶음을 인정한 근거 (벽시계·유효 시간·유효 비율). 기록 전용이며 판정에는 쓰지 않는다.
+    // validtime이 꺼져 있어도 유효 비율은 쌓이므로, 끊김이 점수에 얼마나 끼어드는지 나중에 되짚을 수 있다.
+    const grp = lineProg.lastGroup;
+    gazeLog?.meta({ type: 'lineRead', pageId: currentPage, lines: newly, total: set.size, lineCount: lineProg.lineCount, tMs: g.tMs,
+      validTime, group: grp ? { wallMs: Math.round(grp.wallMs), elapsedMs: Math.round(grp.elapsedMs),
+        coverage: grp.coverage === null ? null : Math.round(grp.coverage * 100) / 100, rangePx: Math.round(grp.rangePx) } : null });
     throttledRender();
   }
   if (step || newly.length) renderGauge();
