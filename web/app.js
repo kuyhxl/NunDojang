@@ -13,6 +13,7 @@ import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, 
 import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS, SWEEP_WINDOW_MS_WIDE } from './modules/gazeSweep.js';
 import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore, LP_MAX_GAP_MS } from './modules/lineProgress.js';
 import { X_OBSERVE_POLICY } from './modules/xObserve.js';
+import { createPaceWatch } from './modules/pace.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -42,6 +43,10 @@ const validTime = urlParams.has('validtime');
 // 재생 결과: 전체 78.7% → 84.1%, 거짓 탈락 기록 61.2% → 79.1%, 나빠진 쪽 1개.
 // 순환이 완전히 없어지지는 않는다 — 훑기 대조군으로 확인하기 전에는 합의하지 말 것 (11-3절).
 const xWindow = urlParams.has('xwindow');
+// 읽기 속도·가로 폭 경고 (pace.js). 기본 켜짐 — ?pace=0 으로 끈다.
+// 점수·통과 여부는 건드리지 않고 "빠르게 훑은 것 같다"를 알리고 기록에만 남긴다.
+// 관문은 한 사람의 기록(성실 47쪽·훑기 11쪽)에서 고른 잠정값이다 (docs/comprehension_evidence.md 16절).
+const paceWarn = urlParams.get('pace') !== '0';
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
@@ -96,6 +101,8 @@ let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 �
 const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
+let paceWatch = null;        // 지금 쪽의 읽기 속도·가로 폭 감시 (쪽을 넘기면 새로 만든다)
+let paceShown = false;       // 경고를 쪽마다 한 번만 띄운다
 let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
 let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
 const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
@@ -267,6 +274,11 @@ async function showPage(pageId) {
     })
     : null;
   observeLogged = false;
+  paceWatch = paceWarn && pdf.mode === 'reflow'
+    ? createPaceWatch({ layout: pdf.layout, lineWidths: pageLineBoxes.map((b) => b.textWidth) })
+    : null;
+  paceShown = false;
+  setMsg('paceMsg', '', '');
   renderGauge();
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
@@ -375,6 +387,16 @@ function trackLine(g) {
   const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
   const sample = { tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true };
   const { step, newly } = lineProg.push(sample, { credit: segmentOpen && !!store });
+  if (paceWatch) {
+    paceWatch.push(sample);
+    if (newly.length) paceWatch.credit(newly);
+    // 경고는 쪽마다 한 번만. 한 번 뜨면 쪽을 넘길 때까지 둔다 (깜빡이지 않게)
+    if (!paceShown && paceWatch.status.warn) {
+      paceShown = true;
+      setMsg('paceMsg', paceWatch.message(), 'warn');
+      gazeLog?.meta({ type: 'pace', pageId: currentPage, tMs: g.tMs, ...paceWatch.snapshot() });
+    }
+  }
   if (step) {
     if (yLock) eyeGlass.setLine(step.to);
     // atMs(줄을 실제로 끝낸 시각)·peak/landed·yLine은 기록 전용이다. 판정에는 쓰지 않는다.

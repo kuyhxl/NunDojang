@@ -250,6 +250,15 @@ body.is-reflow-lg .page-frame { margin-top: 16px; }
 body.is-focus .shell::after { opacity: 1; pointer-events: auto; }
 body.is-focus .page-frame { position: fixed; inset: 0; z-index: 45; margin: auto; width: min(var(--focus-w, 896px), calc(100vw - 32px)); max-width: none; height: fit-content; max-height: calc(100vh - 32px); overflow: hidden; }
 body.is-focus .floatnav { z-index: 60; }
+/* 읽기 모드에서는 문서가 화면을 덮으므로, 속도 경고를 가려지지 않는 자리로 띄운다.
+   측정하는 동안 보이지 않으면 경고의 뜻이 없다 (pace.js). */
+body.is-focus #paceMsg:not(:empty) {
+  /* 위쪽 상태 띠(.topline, 12~42px)를 피해 그 아래에 둔다. 겹치면 둘 다 안 읽힌다 */
+  position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 70;
+  margin: 0; max-width: min(880px, calc(100vw - 32px));
+  padding: 10px 18px; border-radius: 12px; text-align: center; line-height: 1.5;
+  background: rgba(26, 20, 6, .94); box-shadow: 0 10px 30px rgba(0,0,0,.35);
+}
 .nav-exit { border: 0; background: rgba(255,255,255,.1); cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 8px; }
 .nav-exit:hover { background: rgba(255,255,255,.18); }
 .nav-exit .kbd { color: rgba(255,255,255,.6); font-size: 12px; }
