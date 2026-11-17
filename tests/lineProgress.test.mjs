@@ -79,6 +79,72 @@ test('무효 표본은 무시', () => {
   assert.deepEqual(P.push(null).newly, []);
 });
 
+// ---- y로 줄 번호 바로잡기 (?yfix=1). 줄 k 중심 y = 500 + 40k (readLines가 쓰는 자리와 같다)
+const CENTER_Y = (k) => 500 + 40 * k;
+
+test('lineCenterY만 주면 동작이 바뀌지 않는다 (yFix 꺼짐이 기본)', () => {
+  const { samples } = readLines(P1);
+  const a = run(P1, samples).readLines;
+  const b = run(P1, samples, { lineCenterY: CENTER_Y }).readLines;
+  assert.deepEqual(b, a);
+});
+
+test('yFix: y가 2줄 이상 어긋난 채 0.6초 넘게 이어지면 y 쪽으로 옮기고, 그 걸음으로는 아무 줄도 인정하지 않는다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, lineCenterY: CENTER_Y, yFix: true });
+  let t = 0, steps = [], newlyAll = [];
+  const feed = (yPx, untilMs) => {
+    for (; t <= untilMs; t += 40) {
+      const r = P.push({ tMs: t, xPx: LEFT + 300, yPx, valid: true });
+      if (r.step) steps.push(r.step);
+      newlyAll.push(...r.newly);
+    }
+  };
+  feed(CENTER_Y(0), 400);                       // 0번 줄에 있다 (긴 줄이라 머묾 넘김은 없다)
+  assert.equal(P.line, 0, `줄 ${P.line}`);
+  feed(CENTER_Y(5), 1800);                      // y로는 5번 줄. 0.6초 넘게 이어진다
+  const fix = steps.find((s) => s.cause === 'yfix');
+  assert.ok(fix, `yfix 걸음이 없다: ${JSON.stringify(steps)}`);
+  assert.deepEqual([fix.from, fix.to], [0, 5]);
+  assert.equal(P.line, 5);
+  assert.equal(newlyAll.length, 0, `읽음으로 인정된 줄 ${newlyAll.join(',')}`);
+});
+
+test('yFix: 2줄 미만 어긋남이나 짧게 튀는 것으로는 옮기지 않는다', () => {
+  const near = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, lineCenterY: CENTER_Y, yFix: true });
+  for (let t = 0; t <= 3000; t += 40) near.push({ tMs: t, xPx: LEFT + 300, yPx: CENTER_Y(1), valid: true });
+  assert.equal(near.line, 0, '1줄 차이로는 안 옮긴다');
+
+  const blip = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, lineCenterY: CENTER_Y, yFix: true });
+  for (let t = 0; t <= 3000; t += 40) {
+    const far = t % 800 < 400;                  // 0.4초마다 멀리 튀었다 돌아온다 (유지 시간 0.6초 미달)
+    blip.push({ tMs: t, xPx: LEFT + 300, yPx: CENTER_Y(far ? 6 : 0), valid: true });
+  }
+  assert.equal(blip.line, 0, '짧게 튀는 것으로는 안 옮긴다');
+});
+
+test('줄바꿈 걸음의 atMs는 검출 시각이 아니라 줄 끝 최고점 시각이다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT });
+  let step = null;
+  const push = (tMs, xPx) => { const r = P.push({ tMs, xPx, yPx: 500, valid: true }); if (r.step) step = r.step; };
+  for (let i = 0; i <= 10; i++) push(i * 100, LEFT + i * 60);   // 0→1000ms 동안 오른쪽으로
+  push(1100, LEFT + 20);                                        // 줄 처음으로 돌아왔다
+  assert.equal(step?.cause, 'sweep');
+  assert.equal(step.atMs, 1000, `atMs ${step.atMs}`);           // 최고 x였던 1000ms
+  assert.ok(step.atMs < 1100, '검출 시각보다 앞선다');
+  assert.equal(P.lastSweep.landedMs, 1100);
+  assert.equal(P.lastSweep.peakX, LEFT + 600);
+});
+
+test('yLineOf: lineCenterY가 없으면 null, 있으면 화면 y로 본 줄 번호 (범위 밖은 끝 줄로)', () => {
+  const off = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT });
+  assert.equal(off.yLineOf({ tMs: 0, xPx: LEFT, yPx: 580, valid: true }), null);
+  const on = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, lineCenterY: CENTER_Y });
+  assert.equal(on.yLineOf({ tMs: 0, xPx: LEFT, yPx: 580, valid: true }), 2);
+  assert.equal(on.yLineOf({ tMs: 0, xPx: LEFT, yPx: 100, valid: true }), 0);     // 위로 벗어나면 첫 줄
+  assert.equal(on.yLineOf({ tMs: 0, xPx: LEFT, yPx: 9999, valid: true }), 11);   // 아래로 벗어나면 끝 줄
+  assert.equal(on.yLineOf({ tMs: 0, xPx: LEFT, yPx: null, valid: true }), null);
+});
+
 test('lineProgressScore / passLineIndex', () => {
   assert.equal(lineProgressScore(12, 12), 100);
   assert.equal(lineProgressScore(9, 12), 75);

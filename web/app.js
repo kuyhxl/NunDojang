@@ -1,5 +1,5 @@
 // 앱 진입점 — C 소유. 문서·페이지·세그먼트 관리, 측정 연결, 점수·서명·봉인·내보내기.
-// 뼈대 상태: PDF 열기·페이지 이동·mock 측정 연결·점수 표시·서명·로그 내보내기까지 동작. 봉인 PDF 삽입은 단계 5.
+// 문서 열기·페이지 이동·측정 연결·점수 표시·서명·봉인 PDF 발급·로그 내보내기.
 import { DEFAULT_CONFIG, DETECTOR_CONFIG, BLINK_CONFIG, APP_VERSION, resolveAssetUrls, missingDetectorKeys } from './modules/config.js';
 import { PAGE_STATUS, SEGMENT_END_REASONS } from './modules/contracts.js';
 import { createEyeTracker, IS_MOCK as TRACKER_MOCK } from './modules/eyeTracker.js';
@@ -25,6 +25,10 @@ const reflowParam = Number(urlParams.get('reflow'));
 // ?ylock=1 → 세로 고정 표시(개발용 시험): 물방울 세로는 지금 줄 밑선에 두고 가로만 시선을 따라간다.
 // 줄은 시선 x 줄바꿈(gazeSweep.js)으로 넘긴다. 표시 전용이며 점수에는 영향이 없다.
 const yLock = urlParams.has('ylock');
+// ?yfix=1 → y로 줄 번호 바로잡기. 켜지 말 것 — 측정해 보고 폐기했다.
+// 세로 이득이 0.53이고 보정 후에도 오차가 ±2.1줄(줄 간격의 두 배)이라 y로는 줄을 지목할 수 없다.
+// 켜면 더 나쁜 추정이 x 줄바꿈을 덮어써 읽은 줄이 7% 줄어든다 (docs/comprehension_evidence.md 9-6).
+const yFix = urlParams.has('yfix');
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
@@ -55,6 +59,7 @@ let currentDocName = '';
 let currentFile = null;
 let sigPad = null;
 let signaturePng = null, signatureMethod = null;
+let sealed = null;          // 발급된 봉인 {sealId, url, fileName}. 발급 뒤에는 측정을 다시 열지 않는다
 const graph = { iris: [], ear: [], max: 300 };
 const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
@@ -220,7 +225,10 @@ async function showPage(pageId) {
   eyeGlass.setLines(pageLineBoxes);
   gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
   lineProg = pdf.mode === 'reflow'
-    ? createLineProgress({ lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx() })
+    ? createLineProgress({
+      lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
+      lineCenterY: lineCenterYPx, yFix    // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+    })
     : null;
   renderGauge();
   if (gazeLog) {
@@ -274,7 +282,7 @@ async function closeDocument() {
 
 // ---------- 구간 ----------
 function beginSegment() {
-  if (!store || segmentOpen) return;
+  if (!store || segmentOpen || sealed) return;
   const segmentId = `seg-${++segmentCounter}`;
   segmentStartMs = nowMs();
   store.beginSegment({ pageId: currentPage, segmentId, tMs: segmentStartMs });
@@ -292,6 +300,11 @@ function endSegment(reason) {
 function textLeftPx() {
   const first = pageLineBoxes[0];
   return first ? $('pdfCanvas').getBoundingClientRect().left + first.left : NaN;
+}
+/** 줄 k 중심의 화면 y (시선 좌표와 같은 기준). 스크롤·읽기 모드로 자리가 바뀌므로 그때그때 잰다. */
+function lineCenterYPx(k) {
+  const box = pageLineBoxes[k];
+  return box ? $('pdfCanvas').getBoundingClientRect().top + box.top + box.height / 2 : NaN;
 }
 /** 쪽 하나의 보조 점수. 공식 점수와 나란히 비교하려고 계산만 하며 화면·봉인에는 쓰지 않는다. */
 function auxScoreOf(pageId) {
@@ -323,12 +336,19 @@ function logAuxScore(pageId, reason) {
 function trackLine(g) {
   if (!lineProg || !gazeFit || calibration.active || !g?.valid || g.rawXNorm == null) return;
   const vw = g.viewport?.width ?? window.innerWidth, vh = g.viewport?.height ?? window.innerHeight;
-  const { step, newly } = lineProg.push(
-    { tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true },
-    { credit: segmentOpen && !!store });
+  const sample = { tMs: g.tMs, xPx: g.rawXNorm * vw, yPx: g.rawYNorm == null ? null : g.rawYNorm * vh, valid: true };
+  const { step, newly } = lineProg.push(sample, { credit: segmentOpen && !!store });
   if (step) {
     if (yLock) eyeGlass.setLine(step.to);
-    gazeLog?.meta({ type: 'lineLock', pageId: currentPage, from: step.from, to: step.to, cause: step.cause, speed: Math.round(lineProg.speed), tMs: g.tMs });
+    // atMs(줄을 실제로 끝낸 시각)·peak/landed·yLine은 기록 전용이다. 판정에는 쓰지 않는다.
+    // yLine이 to와 자주 어긋나면 줄바꿈 검출이 놓치고 있다는 뜻 (docs/comprehension_evidence.md 9절).
+    const sw = step.cause === 'sweep' ? lineProg.lastSweep : null;
+    gazeLog?.meta({
+      type: 'lineLock', pageId: currentPage, from: step.from, to: step.to, cause: step.cause,
+      speed: Math.round(lineProg.speed), tMs: g.tMs,
+      atMs: step.atMs ?? null, yLine: lineProg.yLineOf(sample), yFix,
+      peakX: sw ? Math.round(sw.peakX) : null, landedX: sw ? Math.round(sw.landedX) : null
+    });
   }
   if (newly.length) {
     const set = readByPage.get(currentPage) ?? new Set();
@@ -554,6 +574,7 @@ $('camStopBtn').addEventListener('click', async () => {
 });
 $('measureToggleBtn').addEventListener('click', async () => {
   if (measuring) { endSegment('manual_stop'); measuring = false; updateMeasureBtn(); await setFocus(false); return; }
+  if (sealed) { setMsg('viewerMsg', '봉인을 발급한 뒤에는 측정을 다시 시작하지 않습니다. 새로 읽으려면 문서를 다시 여세요.', 'warn'); return; }
   // 읽기 모드로 다시 들어가면 줄 위치가 바뀌므로 첫 줄부터 맞춘다
   if (await setFocus(!!gazeFit) && gazeFit && await anchorFirstLine() === 'aborted') return;
   measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment();
@@ -730,27 +751,43 @@ $('signCompleteBtn').addEventListener('click', async () => {
   setMsg('signMsg', '서명 완료. 봉인을 발급할 수 있습니다.', 'good');
   $('sealBtn').disabled = false;
 });
-function resetSignature() { signaturePng = null; signatureMethod = null; sigPad.clear(); $('consentChk').checked = false; $('signArea').hidden = true; setMsg('signMsg', '', ''); setMsg('sealMsg', '', ''); $('sealBtn').disabled = true; }
+function resetSignature() { resetSeal(); signaturePng = null; signatureMethod = null; sigPad.clear(); $('consentChk').checked = false; $('signArea').hidden = true; setMsg('signMsg', '', ''); setMsg('sealMsg', '', ''); $('sealBtn').disabled = true; }
 
 // ---------- 봉인 ----------
 $('sealBtn').addEventListener('click', async () => {
+  if (sealed) return;
+  $('sealBtn').disabled = true;
+  setMsg('sealMsg', '봉인 PDF를 만드는 중…', '');
   try {
+    endSegment('sign_requested'); measuring = false; updateMeasureBtn(); await setFocus(false);
     const sig = store.getSignature();
     const r = await issueSeal({ pdfFile: currentFile, snapshot: store.getSnapshot(), signaturePng: sig.pngDataUrl,
-      signatureMethod: sig.method, signatureImageSha256: sig.sha256, appVersion: APP_VERSION, config });
+      signatureMethod: sig.method, signatureImageSha256: sig.sha256, appVersion: APP_VERSION, config, docName: currentDocName });
     store.setSeal(r.sealPayload);
-    if (r.sealedPdfBlob) {
-      download(`${currentDocName.replace(/\.pdf$/i, '')}.gazegate-${r.sealId}.pdf`, r.sealedPdfBlob, 'application/pdf');
-      setMsg('sealMsg', `봉인 발급됨 · ${r.sealId} · ${r.issuedAt}`, 'good');
-      $('sealBtn').closest('.left-section').classList.add('is-issued');
-    } else {
-      setMsg('sealMsg', `봉인 ID ${r.sealId} 생성 (PDF 스탬프 삽입은 단계 5에서 구현 예정 — 지금은 session.json에만 기록)`, 'warn');
-      $('sealBtn').closest('.left-section').classList.add('is-issued');
-    }
-    download(`session-${r.sealId}.json`, buildSessionJson());
-    $('sealBtn').disabled = true;
-  } catch (err) { setMsg('sealMsg', err.message, 'bad'); }
+    const fileName = `${currentDocName.replace(/\.pdf$/i, '')}.gazegate-${r.sealId}.pdf`;
+    sealed = { sealId: r.sealId, url: URL.createObjectURL(r.sealedPdfBlob), fileName };
+    download(fileName, r.sealedPdfBlob, 'application/pdf');
+    download(`session-${r.sealId}.json`, buildSessionJson(), 'application/json');
+    showSealResult(r);
+    $('sealBtn').closest('.left-section').classList.add('is-issued');
+  } catch (err) {
+    setMsg('sealMsg', err.message, 'bad');
+    $('sealBtn').disabled = !store?.isComplete();
+  }
 });
+function showSealResult(r) {
+  const el = $('sealMsg');
+  el.className = 'note good';
+  el.textContent = `봉인 발급됨 · ${r.sealId} · ${r.issuedAt}${r.fontFallback ? ' (한글 글꼴을 못 불러와 시스템 글꼴로 그림)' : ''} `;
+  const view = Object.assign(document.createElement('a'), { href: sealed.url, target: '_blank', rel: 'noopener', textContent: '봉인 PDF 보기' });
+  const again = Object.assign(document.createElement('a'), { href: sealed.url, download: sealed.fileName, textContent: '다시 받기' });
+  el.append(view, ' · ', again);
+}
+function resetSeal() {
+  if (sealed?.url) URL.revokeObjectURL(sealed.url);
+  sealed = null;
+  $('sealBtn').closest('.left-section').classList.remove('is-issued');
+}
 
 // ---------- 내보내기 ----------
 function buildSessionJson() {

@@ -21,10 +21,13 @@ export const LP_MAX_SPEED_RATIO = 1.0;
  * @param {number[]} o.lineWidths 글줄 폭 (위에서부터)
  * @param {{columnPx:number, lineHeightPx:number}} o.layout
  * @param {number} o.textLeftPx 글 왼쪽 끝의 화면 x
+ * @param {null|((k:number)=>number)} [o.lineCenterY=null] 줄 k 중심의 화면 y. 주면 `yLineOf`로 비교·기록할 수 있다 (그것만으로는 동작이 바뀌지 않는다).
+ * @param {boolean} [o.yFix=false] true일 때만 y로 줄 번호를 바로잡는다 (?yfix=1).
+ *   **켜지 말 것** — 세로 이득 0.53·오차 ±2.1줄로 측정되어 폐기한 안이다 (docs/comprehension_evidence.md 9-6).
  */
-export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO }) {
+export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false }) {
   const widths = Array.isArray(lineWidths) ? lineWidths.map((w) => (Number.isFinite(w) ? w : 0)) : [];
-  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx });
+  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix });
   const maxSpeed = maxSpeedRatio * layout.columnPx;          // px/s
   const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제
   const read = new Set();
@@ -68,6 +71,9 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
       // 짧은 줄에 충분히 머물렀다 (머묾 넘김 자체가 시간 조건보다 길다)
       if (canCredit) credit(step.from, step.to, newly);
       restart(lineSpan, t, x, step.to);
+    } else if (step?.cause === 'yfix') {
+      // y가 크게 어긋나 자리를 옮긴 것이다. 읽은 증거가 아니므로 아무 줄도 인정하지 않고 구간만 다시 잡는다.
+      restart(sweepSpan, t, x, step.to); restart(lineSpan, t, x, step.to);
     } else if (canCredit) {
       const cur = locker.line;
       if (!read.has(cur) && groupOk(lineSpan, cur, cur + 1, t)) credit(cur, cur + 1, newly);   // 지금 줄 (마지막 줄 포함)
@@ -80,7 +86,11 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
     get line() { return locker.line; },
     get speed() { return locker.speed; },
     get readLines() { return [...read].sort((a, b) => a - b); },
-    get lineCount() { return widths.length; }
+    get lineCount() { return widths.length; },
+    /** 마지막 줄바꿈의 시각·위치 (기록·분석용) */
+    get lastSweep() { return locker.lastSweep; },
+    /** 지금 y로 보면 몇 번째 줄인가 (기록·비교용) */
+    yLineOf: (sample) => locker.yLineOf(sample)
   };
 }
 

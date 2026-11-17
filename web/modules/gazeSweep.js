@@ -21,6 +21,7 @@ export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx 
   let recent = [];          // 최근 windowMs 안의 유효 표본 {tMs, xPx, yPx}
   let lastSweepMs = -Infinity;
   let count = 0;
+  let last = null;          // 마지막 줄바꿈의 시각·위치 (진단·기록용)
 
   /**
    * 표본 하나를 넣는다. 줄바꿈이면 true.
@@ -38,13 +39,16 @@ export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx 
     if (landingMaxX !== null && xPx > landingMaxX) return false;                       // 줄 중간으로 되돌아감
     if (minDyPx !== null && y !== null && peak.yPx !== null && y - peak.yPx < minDyPx) return false;  // 위로 크게 튐 (버튼·다른 곳)
     count++; lastSweepMs = tMs;
+    // peak은 "줄 끝을 떠난 순간", landed는 "다음 줄에 앉은 것을 검출한 순간".
+    // 그 사이가 줄바꿈 비행 + 검출 지연이다 (실측 중앙 0.23초). 판정에는 쓰지 않고 기록만 한다.
+    last = { peakMs: peak.tMs, peakX: peak.xPx, landedMs: tMs, landedX: xPx };
     recent = [{ tMs, xPx, yPx: y }];   // 돌아온 자리부터 다시 본다
     return true;
   }
 
-  function reset() { recent = []; lastSweepMs = -Infinity; count = 0; }
+  function reset() { recent = []; lastSweepMs = -Infinity; count = 0; last = null; }
 
-  return { push, reset, get count() { return count; } };
+  return { push, reset, get count() { return count; }, get lastSweep() { return last ? { ...last } : null; } };
 }
 
 /** 줄바꿈으로 볼 최소 이동 폭: 단 폭의 19% (800px 단 → 152px, 520px 단 → 99px) */
@@ -93,6 +97,20 @@ export const LOCK_DWELL_MARGIN_MS = 1500;
 /** 읽기 속도를 아직 못 잰 동안 쓰는 값: 초당 단 폭의 31.25% (800px 단 → 250px/s, 실측 190~350px/s) */
 export const LOCK_DEFAULT_SPEED_RATIO = 0.3125;
 
+// ---- y로 줄 번호 바로잡기 (?yfix=1, 개발용 시험)
+// 켜지 말 것. 측정해 보고 폐기한 안이다 (docs/comprehension_evidence.md 9-6).
+//   기록 20261117-122220에서 줄 걸음 시각의 시선 y를 그 줄의 실제 y에 회귀하면
+//     시선y = 0.53 × 참y + 122 (r = +0.64, n = 60)
+//   세로 이득이 0.53이고, 배율·치우침을 다 보정한 뒤에도 흩어짐이 σ = 86px = 2.1줄 남는다.
+//   줄 간격(40px)의 두 배가 넘으므로 y로는 몇 번째 줄인지 원리상 알 수 없다. 더 나쁜 추정으로
+//   더 나은 추정(x 줄바꿈)을 덮어쓰는 셈이어서, 켜면 읽은 줄이 7% 줄어든다.
+// 남겨 두는 이유: 이 판정을 만든 기록 항목(yLineOf·atMs)이 같은 코드 경로에 있고, 같은 안이 다시
+//   나왔을 때 "재 봤고 안 된다"를 가리킬 자리가 필요하다. 세로 이득은 보정 단계(A)에서 다룰 문제다.
+/** 이 줄 수 이상 어긋나야 끌어다 맞춘다 */
+export const Y_FIX_MIN_LINES = 2;
+/** 그만큼 어긋난 상태가 이 시간 넘게 이어져야 맞춘다 (한 표본 튐으로 움직이지 않게) */
+export const Y_FIX_HOLD_MS = 600;
+
 /**
  * 세로 고정 표시(?ylock=1)의 줄 추적기. 쪽마다 새로 만든다.
  * - 줄바꿈이 잡히면 nextLineAfterSweep으로 넘긴다 (짧은 줄 뒤 놓친 줄바꿈 보완)
@@ -104,8 +122,12 @@ export const LOCK_DEFAULT_SPEED_RATIO = 0.3125;
  * @param {number[]} o.lineWidths 글줄 폭
  * @param {{columnPx:number, lineHeightPx:number}} o.layout
  * @param {number} o.textLeftPx 글 왼쪽 끝의 화면 x
+ * @param {null|((k:number)=>number)} [o.lineCenterY=null] 줄 k 중심의 화면 y. 주면 `yLineOf`로 y 쪽 줄 번호를 알려 준다.
+ *        스크롤·읽기 모드로 자리가 바뀌므로 값이 아니라 그때그때 재는 함수로 받는다. 이것만으로는 줄 번호를 바꾸지 않는다.
+ * @param {boolean} [o.yFix=false] true일 때만 y로 줄 번호를 실제로 바로잡는다 (?yfix=1).
  */
-export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs = LOCK_DWELL_MARGIN_MS }) {
+export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs = LOCK_DWELL_MARGIN_MS,
+  lineCenterY = null, yFix = false, yFixMinLines = Y_FIX_MIN_LINES, yFixHoldMs = Y_FIX_HOLD_MS }) {
   const widths = Array.isArray(lineWidths) ? lineWidths : [];
   const last = Math.max(widths.length - 1, 0);
   const longMin = LOCK_LONG_LINE_RATIO * layout.columnPx;
@@ -114,6 +136,16 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
   const speeds = [];
   let line = 0;
   let enterMs = null;   // 지금 줄에 들어온 시각 (첫 표본에서 정한다)
+  let yGapSince = null; // y가 크게 어긋난 상태가 시작된 시각
+
+  /** y로 본 줄 번호. 쓸 수 없으면 null. */
+  function yLineOf(sample) {
+    if (typeof lineCenterY !== 'function' || !Number.isFinite(sample?.yPx)) return null;
+    const c0 = lineCenterY(0);
+    if (!Number.isFinite(c0) || !(layout.lineHeightPx > 0)) return null;
+    const k = Math.round((sample.yPx - c0) / layout.lineHeightPx);
+    return Math.min(Math.max(k, 0), last);
+  }
 
   function speed() {
     if (!speeds.length) return defaultSpeed;
@@ -130,15 +162,34 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
       const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx);
       const dt = (t - enterMs) / 1000;
       if (to === from + 1 && widths[from] >= longMin && dt > 0.5) speeds.push(widths[from] / dt);
-      line = to; enterMs = t;
-      return to !== from ? { from, to, cause: 'sweep' } : null;
+      line = to; enterMs = t; yGapSince = null;
+      // atMs: 줄을 실제로 끝낸 시각(줄 끝 최고점). 검출 시각(t)보다 앞선다. 기록·분석용이며 판정에는 안 쓴다.
+      return to !== from ? { from, to, cause: 'sweep', atMs: counter.lastSweep?.peakMs ?? t } : null;
     }
     if (line < last && widths[line] < longMin && t - enterMs > (widths[line] / speed()) * 1000 + dwellMarginMs) {
-      const from = line; line += 1; enterMs = t;
-      return { from, to: line, cause: 'dwell' };
+      const from = line; line += 1; enterMs = t; yGapSince = null;
+      return { from, to: line, cause: 'dwell', atMs: t };
+    }
+    // y가 yFixMinLines 이상 어긋난 채 yFixHoldMs 넘게 이어지면 y 쪽으로 옮긴다 (yFix를 켠 경우만)
+    const yk = yFix ? yLineOf(sample) : null;
+    if (yk !== null && Math.abs(yk - line) >= yFixMinLines) {
+      if (yGapSince === null) yGapSince = t;
+      else if (t - yGapSince > yFixHoldMs) {
+        const from = line; line = yk; enterMs = t; yGapSince = null;
+        return { from, to: line, cause: 'yfix', atMs: t };
+      }
+    } else {
+      yGapSince = null;
     }
     return null;
   }
 
-  return { push, get line() { return line; }, get speed() { return speed(); } };
+  return {
+    push,
+    get line() { return line; },
+    get speed() { return speed(); },
+    get lastSweep() { return counter.lastSweep; },
+    /** 지금 y로 보면 몇 번째 줄인가 (기록·비교용). lineCenterY가 없으면 null. */
+    yLineOf
+  };
 }
