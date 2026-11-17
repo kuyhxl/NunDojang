@@ -28,16 +28,24 @@ export const LP_MAX_GAP_MS = 250;
  * @param {null|((k:number)=>number)} [o.lineCenterY=null] 줄 k 중심의 화면 y. 주면 `yLineOf`로 비교·기록할 수 있다 (그것만으로는 동작이 바뀌지 않는다).
  * @param {boolean} [o.yFix=false] true일 때만 y로 줄 번호를 바로잡는다 (?yfix=1).
  *   **켜지 말 것** — 세로 이득 0.53·오차 ±2.1줄로 측정되어 폐기한 안이다 (docs/comprehension_evidence.md 9-6).
+ * @param {{min:number,max:number}|null} [o.observedX=null] 읽기 전 기준점으로 잰 **이 사람의 가로 범위** (?xanchor=1).
+ *   주면 가로 진행 조건을 시선 폭 기준으로 환산한다 — `시선 범위 ≥ 0.4 × 줄 폭 × (관측 폭 ÷ 단 폭)`.
+ *   왜: 시선 x는 단 폭의 70~80%로 눌려 찍히고 그 비율이 회차마다 다르다. 환산하지 않으면
+ *   눌린 회차에서 "0.4 × 줄 폭"이 사실상 0.55를 요구하게 되어 성실한 독자가 떨어진다.
+ *   기준은 **읽기 전 점 구간에서만** 만든다 (xAnchor.js). 읽는 동안의 표본으로 만들면 순환이다.
  * @param {number|null} [o.maxGapMs=null] 주면 시간 조건을 **벽시계가 아니라 유효 시간**으로 센다 (?validtime=1).
  *   왜: 지금은 `tMs - 구간 시작`이라, 추적이 5초 끊겨도 그 5초가 읽은 시간으로 계산돼 시간 조건이 공짜로 통과한다.
  *   주면 표본 사이 간격이 maxGapMs 이하일 때만 그 간격을 더한다. 끊긴 동안은 0초로 친다.
  *   기본 null = 지금 동작 그대로. 점수가 바뀌는 변경이라 합의 전에는 주소 플래그로만 켠다.
  */
-export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false, maxGapMs = null }) {
+export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false, maxGapMs = null, observedX = null }) {
   const widths = Array.isArray(lineWidths) ? lineWidths.map((w) => (Number.isFinite(w) ? w : 0)) : [];
   const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix });
   const maxSpeed = maxSpeedRatio * layout.columnPx;          // px/s
-  const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제
+  const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제 (글 폭 기준이라 환산하지 않는다)
+  // 글 폭 1px이 시선에서 몇 px으로 찍히는가. 기준점이 없으면 1 (지금 동작 그대로).
+  const xScale = observedX && observedX.max > observedX.min
+    ? (observedX.max - observedX.min) / layout.columnPx : 1;
   const read = new Set();
   // 두 가지 구간을 따로 잰다.
   //  - 줄바꿈 구간: 직전 줄바꿈(또는 쪽 시작)부터. 줄바꿈이 잡히면 그 사이 줄 묶음을 이 구간으로 판정한다.
@@ -56,9 +64,11 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
     const wallMs = tMs - sp.startMs;
     const elapsedMs = maxGapMs === null ? wallMs : sp.validMs;   // 끊긴 시간은 읽은 시간이 아니다
     const timeOk = elapsedMs / 1000 >= sum / maxSpeed;
-    const xOk = longest < shortMin || sp.maxX - sp.minX >= xRatio * longest;
+    const needPx = xRatio * longest * xScale;
+    const xOk = longest < shortMin || sp.maxX - sp.minX >= needPx;
     lastGroup = { from, to: toExcl, sumPx: sum, longestPx: longest, wallMs, elapsedMs,
-      coverage: wallMs > 0 ? sp.validMs / wallMs : null, rangePx: sp.maxX - sp.minX, timeOk, xOk };
+      coverage: wallMs > 0 ? sp.validMs / wallMs : null, rangePx: sp.maxX - sp.minX,
+      needPx, xScale, timeOk, xOk };
     return timeOk && xOk;
   }
   function credit(from, toExcl, out) {

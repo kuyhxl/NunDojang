@@ -74,10 +74,17 @@ export const SWEEP_LANDING_RATIO = 0.25;
  * @param {{columnPx:number, lineHeightPx:number}} layout
  * @param {number} textLeftPx 글 왼쪽 끝의 화면 x (CSS px, 시선 좌표와 같은 기준)
  */
-export function sweepOptionsFor(layout, textLeftPx, { maxGapMs = null } = {}) {
+export function sweepOptionsFor(layout, textLeftPx, { observedX = null, maxGapMs = null } = {}) {
+  // observedX를 주면 두 문턱을 **그 사람이 실제로 찍히는 범위**에서 잡는다 (xAnchor.js).
+  // 글 폭이 아니라 시선 폭이 기준이 되므로, 시선 x가 눌려 찍히는 정도가 달라도 같은 뜻이 된다.
+  const span = observedX ? observedX.max - observedX.min : layout.columnPx;
+  const absCut = Number.isFinite(textLeftPx) ? textLeftPx + SWEEP_LANDING_RATIO * layout.columnPx : null;
+  const perCut = observedX ? observedX.min + SWEEP_LANDING_RATIO * span : null;
   return {
-    minDropPx: Math.round(SWEEP_DROP_RATIO * layout.columnPx),
-    landingMaxX: Number.isFinite(textLeftPx) ? textLeftPx + SWEEP_LANDING_RATIO * layout.columnPx : null,
+    minDropPx: Math.round(SWEEP_DROP_RATIO * span),
+    // 둘 중 **넓은 쪽**을 쓴다. 개인 기준이 지금보다 더 깐깐해져서 잘 읽던 쪽이 떨어지는 일은 막는다
+    // (실측: 상대 기준만 쓰면 마지막 짧은 쪽이 5→2·8→6으로 줄었다. docs/comprehension_evidence.md 11절)
+    landingMaxX: perCut === null ? absCut : (absCut === null ? perCut : Math.max(absCut, perCut)),
     minDyPx: -layout.lineHeightPx,
     maxGapMs
   };
