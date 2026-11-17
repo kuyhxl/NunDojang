@@ -175,6 +175,67 @@ test('lastGroup이 벽시계·유효 시간·유효 비율을 함께 준다', ()
   assert.ok(g.coverage > 0.9, `끊김이 없으면 유효 비율이 1에 가까워야 한다: ${g.coverage}`);
 });
 
+// ---- 11절: 쪽의 관측 범위로 문턱 갈아 끼우기 (?xwindow=1)
+/** 오른쪽으로 shift만큼 밀리고 gain만큼 눌려 찍히는 독자. 절대 착지권(LEFT+200)에 못 닿는다. */
+function shiftedReader(widths, { shift = 300, gain = 0.7, speed = 250, rounds = 1 } = {}) {
+  const out = []; let t = 0;
+  for (let n = 0; n < rounds; n++) for (let k = 0; k < widths.length; k++) {
+    const dur = Math.max(500, (widths[k] / speed) * 1000);
+    for (let u = 0; u <= dur; u += 40) {
+      const step = Math.floor((u / dur) * 6) / 6;
+      out.push({ tMs: t + u, xPx: LEFT + shift + widths[k] * gain * step, yPx: 500 + 40 * k, valid: true });
+    }
+    t += dur + 40;
+  }
+  return out;
+}
+
+test('관측 창을 켜면 오른쪽으로 밀려 찍히는 독자의 줄바꿈이 잡힌다', () => {
+  const samples = shiftedReader(P1, { rounds: 2 });   // 8초 창이 닫히고도 남게 두 바퀴
+  const off = run(P1, samples).readLines.length;
+  const on = run(P1, samples, { observeMs: 8000 }).readLines.length;
+  assert.ok(on > off, `관측 창이 도움이 돼야 한다: ${off} → ${on}`);
+});
+
+test('보통 독자의 착지권은 그대로고, 읽은 줄이 줄지 않는다', () => {
+  const { samples } = readLines(P1);                  // 글 왼쪽에서 시작하는 보통 독자
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, observeMs: 8000 });
+  for (const x of samples) P.push(x);
+  // 왼쪽에서 시작하므로 개인 착지권이 절대 착지권보다 깐깐하다 → max가 절대 쪽을 고른다
+  assert.equal(P.thresholds.landingMaxX, LEFT + 0.25 * LAYOUT.columnPx);
+  // 이동 문턱과 가로 환산은 느슨해진다 (시선 폭이 글 폭보다 좁으므로)
+  assert.ok(P.thresholds.minDropPx < Math.round(0.19 * LAYOUT.columnPx));
+  // 다만 **모든 쪽에서 좋아지는 것은 아니다.** 이동 문턱이 느슨해지면 줄 안에서 헛 줄바꿈이
+  // 잡혀 묶음이 쪼개질 수 있다. 실제 기록 재생에서도 좋아진 쪽 16개, 나빠진 쪽 1개였다.
+  // 여기서는 "크게 깎이지 않는다"까지만 못 박는다 (docs/decisions.md 열린 제안 2).
+  const off = run(P1, samples).readLines.length;
+  assert.ok(P.readLines.length >= off - 1, `${off} → ${P.readLines.length}: 한 줄 넘게 깎이면 안 된다`);
+});
+
+test('관측 창이 닫히기 전에는 지금 문턱을 쓴다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, observeMs: 8000 });
+  for (const s of shiftedReader(P1).slice(0, 40)) P.push(s);   // 1.6초치
+  assert.equal(P.observeSnapshot().closed, false);
+  assert.equal(P.observedX, null);
+  assert.equal(P.thresholds.landingMaxX, LEFT + 0.25 * LAYOUT.columnPx);
+});
+
+test('observeSnapshot이 폭비와 갈아 낀 문턱을 알려 준다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, observeMs: 8000 });
+  for (const s of shiftedReader(P1, { rounds: 2 })) P.push(s);
+  const sn = P.observeSnapshot();
+  assert.equal(sn.closed, true);
+  assert.equal(sn.ready, true, `창이 닫혔지만 못 썼다: ${sn.reason}`);
+  assert.ok(sn.spanRatio > 0.3 && sn.spanRatio < 1.5, `폭비 ${sn.spanRatio}`);
+  assert.ok(P.thresholds.landingMaxX > LEFT + 0.25 * LAYOUT.columnPx, '밀린 만큼 착지권이 따라갔다');
+});
+
+test('sweepWindowMs를 주면 계수기 창 길이가 바뀐다', () => {
+  const P = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT, sweepWindowMs: 600 });
+  assert.equal(P.thresholds.windowMs, 600);
+  assert.equal(createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT }).thresholds.windowMs, 400);
+});
+
 test('lineProgressScore / passLineIndex', () => {
   assert.equal(lineProgressScore(12, 12), 100);
   assert.equal(lineProgressScore(9, 12), 75);

@@ -13,6 +13,8 @@
  *  (출처: PR #14 HorizontalDetector. 그 구현은 GPL-3.0이라 제품에 넣지 않는다. docs/decisions.md 참고) */
 export const SWEEP_MAX_GAP_MS = 250;
 
+import { createXObserver } from './xObserve.js';
+
 /**
  * @param {object} o
  * @param {number} o.minDropPx  이만큼 넘게 왼쪽으로 가야 줄바꿈으로 본다 (CSS px)
@@ -24,8 +26,11 @@ export const SWEEP_MAX_GAP_MS = 250;
  *   왜: 추적이 3초 끊긴 사이를 가로질러도 "x가 왼쪽으로 크게 갔다"가 성립해 줄바꿈이 된다.
  *   끊김 전 최고점과 끊김 후 착지는 이어진 눈 움직임이 아니므로, 창을 비워 다음 표본부터 다시 본다.
  */
-export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx = null, windowMs = 400, refractoryMs = 700, maxGapMs = null }) {
+export function createGazeSweepCounter(options) {
+  let { minDropPx, landingMaxX = null, minDyPx = null } = options;
+  const { windowMs = 400, refractoryMs = 700, maxGapMs = null } = options;
   if (!(minDropPx > 0)) throw new Error('createGazeSweepCounter: minDropPx must be > 0');
+  // setThresholds로 갈아 끼울 수 있어야 하므로 let으로 받는다 (기본값은 그대로).
   let recent = [];          // 최근 windowMs 안의 유효 표본 {tMs, xPx, yPx}
   let lastSweepMs = -Infinity;
   let lastSampleMs = null;  // 마지막 유효 표본 시각 (끊김 판정용)
@@ -60,12 +65,27 @@ export function createGazeSweepCounter({ minDropPx, landingMaxX = null, minDyPx 
 
   function reset() { recent = []; lastSweepMs = -Infinity; lastSampleMs = null; count = 0; dropped = 0; last = null; }
 
-  return { push, reset, get count() { return count; }, get droppedWindows() { return dropped; },
+  /**
+   * 문턱을 갈아 끼운다. 쪽의 관측 가로 범위가 정해진 뒤 한 번 부른다 (xObserve.js).
+   * 이미 센 줄바꿈과 지금 창은 건드리지 않는다 — 바뀐 문턱은 **다음 표본부터** 적용된다.
+   */
+  function setThresholds(next = {}) {
+    if (Number.isFinite(next.minDropPx) && next.minDropPx > 0) minDropPx = next.minDropPx;
+    if (next.landingMaxX === null || Number.isFinite(next.landingMaxX)) landingMaxX = next.landingMaxX;
+    if (next.minDyPx === null || Number.isFinite(next.minDyPx)) minDyPx = next.minDyPx;
+  }
+
+  return { push, reset, setThresholds, get count() { return count; }, get droppedWindows() { return dropped; },
+    get thresholds() { return { minDropPx, landingMaxX, minDyPx, windowMs, refractoryMs, maxGapMs }; },
     get lastSweep() { return last ? { ...last } : null; } };
 }
 
 /** 줄바꿈으로 볼 최소 이동 폭: 단 폭의 19% (800px 단 → 152px, 520px 단 → 99px) */
 export const SWEEP_DROP_RATIO = 0.19;
+/** 11절 제안의 넓힌 창 길이 (기본 400ms → 600ms).
+ *  왜: 줄바꿈 비행 + 검출 지연이 실측 중앙 0.23초인데, 느린 되돌림은 400ms 창을 벗어나 놓친다.
+ *  재생에서 800·1000ms는 잘 읽던 쪽을 깎았고 600ms에서만 손해 없이 늘었다 (11절). */
+export const SWEEP_WINDOW_MS_WIDE = 600;
 /** 착지 구역: 글 왼쪽 끝에서 단 폭의 25% 안 (시선 x가 실제보다 왼쪽으로 70px 안팎 밀린 경우도 받는다) */
 export const SWEEP_LANDING_RATIO = 0.25;
 
@@ -75,7 +95,8 @@ export const SWEEP_LANDING_RATIO = 0.25;
  * @param {number} textLeftPx 글 왼쪽 끝의 화면 x (CSS px, 시선 좌표와 같은 기준)
  */
 export function sweepOptionsFor(layout, textLeftPx, { observedX = null, maxGapMs = null } = {}) {
-  // observedX를 주면 두 문턱을 **그 사람이 실제로 찍히는 범위**에서 잡는다 (xAnchor.js).
+  // observedX를 주면 두 문턱을 **그 쪽에서 실제로 찍히는 범위**에서 잡는다 (xObserve.js).
+  // 읽기 전 기준점(xAnchor.js)에서 가져오는 안은 측정해 보고 폐기했다 — 점 볼 때와 읽을 때는 다른 체제다 (13절).
   // 글 폭이 아니라 시선 폭이 기준이 되므로, 시선 x가 눌려 찍히는 정도가 달라도 같은 뜻이 된다.
   const span = observedX ? observedX.max - observedX.min : layout.columnPx;
   const absCut = Number.isFinite(textLeftPx) ? textLeftPx + SWEEP_LANDING_RATIO * layout.columnPx : null;
@@ -146,14 +167,23 @@ export const Y_FIX_HOLD_MS = 600;
  * @param {null|((k:number)=>number)} [o.lineCenterY=null] 줄 k 중심의 화면 y. 주면 `yLineOf`로 y 쪽 줄 번호를 알려 준다.
  *        스크롤·읽기 모드로 자리가 바뀌므로 값이 아니라 그때그때 재는 함수로 받는다. 이것만으로는 줄 번호를 바꾸지 않는다.
  * @param {boolean} [o.yFix=false] true일 때만 y로 줄 번호를 실제로 바로잡는다 (?yfix=1).
+ * @param {number|null} [o.observeMs=null] 주면 쪽의 앞 이 시간 동안 시선 x를 모아, 창이 닫힐 때
+ *   착지권과 이동 문턱을 **그 쪽의 관측 범위** 기준으로 갈아 끼운다 (?xwindow=1, xObserve.js).
+ *   절대 기준보다 느슨해질 때만 바뀐다. null이면 지금 동작 그대로.
+ * @param {number} [o.sweepWindowMs=400] 줄바꿈 계수기의 창 길이. 11절 제안은 600.
+ * @param {number|null} [o.maxGapMs=null] 계수기의 끊김 게이트 (?validtime=1).
+ * @param {null|((obs:{min:number,max:number})=>void)} [o.onObserved=null] 관측 범위가 정해진 순간 한 번 불린다.
  */
 export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs = LOCK_DWELL_MARGIN_MS,
-  lineCenterY = null, yFix = false, yFixMinLines = Y_FIX_MIN_LINES, yFixHoldMs = Y_FIX_HOLD_MS }) {
+  lineCenterY = null, yFix = false, yFixMinLines = Y_FIX_MIN_LINES, yFixHoldMs = Y_FIX_HOLD_MS,
+  observeMs = null, sweepWindowMs = 400, maxGapMs = null, onObserved = null }) {
   const widths = Array.isArray(lineWidths) ? lineWidths : [];
   const last = Math.max(widths.length - 1, 0);
   const longMin = LOCK_LONG_LINE_RATIO * layout.columnPx;
   const defaultSpeed = LOCK_DEFAULT_SPEED_RATIO * layout.columnPx;   // px/s
-  const counter = createGazeSweepCounter(sweepOptionsFor(layout, textLeftPx));
+  const counter = createGazeSweepCounter({ ...sweepOptionsFor(layout, textLeftPx, { maxGapMs }), windowMs: sweepWindowMs });
+  // 쪽의 관측 가로 범위를 모은다. observeMs를 주지 않으면 만들지 않는다 (지금 동작 그대로).
+  const observer = observeMs ? createXObserver({ layout, observeMs }) : null;
   const speeds = [];
   let line = 0;
   let enterMs = null;   // 지금 줄에 들어온 시각 (첫 표본에서 정한다)
@@ -179,6 +209,11 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     if (!sample?.valid || !Number.isFinite(sample.tMs)) return null;
     const t = sample.tMs;
     if (enterMs === null) enterMs = t;
+    // 관측 창이 이번에 닫히면 문턱을 갈아 끼운다. 이미 센 줄바꿈은 건드리지 않는다.
+    if (observer) {
+      const obs = observer.push(sample);
+      if (obs) { counter.setThresholds(sweepOptionsFor(layout, textLeftPx, { observedX: obs, maxGapMs })); onObserved?.(obs); }
+    }
     if (counter.push(sample)) {
       const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx);
       const dt = (t - enterMs) / 1000;
@@ -210,6 +245,12 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     get line() { return line; },
     get speed() { return speed(); },
     get lastSweep() { return counter.lastSweep; },
+    /** 쪽의 관측 가로 범위. 창이 아직 안 닫혔거나 품질 미달이면 null */
+    get observedX() { return observer?.observedX ?? null; },
+    /** 지금 쓰고 있는 줄바꿈 문턱 (기록·진단용) */
+    get thresholds() { return counter.thresholds; },
+    /** 관측 창의 속사정 (기록·진단용) */
+    observeSnapshot() { return observer ? observer.snapshot() : null; },
     /** 지금 y로 보면 몇 번째 줄인가 (기록·비교용). lineCenterY가 없으면 null. */
     yLineOf
   };

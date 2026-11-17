@@ -10,8 +10,9 @@ import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './mo
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
-import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS } from './modules/gazeSweep.js';
+import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS, SWEEP_WINDOW_MS_WIDE } from './modules/gazeSweep.js';
 import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore, LP_MAX_GAP_MS } from './modules/lineProgress.js';
+import { X_OBSERVE_POLICY } from './modules/xObserve.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -34,6 +35,13 @@ const yFix = urlParams.has('yfix');
 //     줄바꿈 계수기도 끊김을 가로지른 x 이동을 줄바꿈으로 세고 있다.
 // 점수가 바뀌므로 기본값은 꺼짐이고, 합의 전에는 이 플래그로만 켠다 (docs/decisions.md 열린 제안).
 const validTime = urlParams.has('validtime');
+// ?xwindow=1 → 11절 제안(개발용 시험, 팀 합의 전): 쪽의 앞 8초 동안 시선 x를 모아,
+// 줄바꿈 착지권과 이동 문턱을 **그 쪽의 관측 범위**로 갈아 끼운다. 창 길이도 400 → 600ms.
+// 왜: 착지권이 글의 절대 기하에서 나와서, 시선 x가 눌려 찍히는 정도가 쪽마다 다르면
+//     같은 사람이 같은 글을 더 오래 읽고도 97%와 61%를 받는다 (docs/comprehension_evidence.md 10절).
+// 재생 결과: 전체 78.7% → 84.1%, 거짓 탈락 기록 61.2% → 79.1%, 나빠진 쪽 1개.
+// 순환이 완전히 없어지지는 않는다 — 훑기 대조군으로 확인하기 전에는 합의하지 말 것 (11-3절).
+const xWindow = urlParams.has('xwindow');
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
@@ -82,6 +90,7 @@ let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 �
 // 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
 const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
+let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
 let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
 const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
@@ -229,6 +238,7 @@ async function showPage(pageId) {
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
   const gapMs = validTime ? SWEEP_MAX_GAP_MS : null;
+  // gazeSweep은 보조 점수(기록 전용)라 관측 창을 쓰지 않는다. 줄 판정 쪽만 11절 제안을 받는다.
   gazeSweep = pdf.mode === 'reflow'
     ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx(), { maxGapMs: gapMs }))
     : null;
@@ -236,9 +246,12 @@ async function showPage(pageId) {
     ? createLineProgress({
       lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
       lineCenterY: lineCenterYPx, yFix,   // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
-      maxGapMs: validTime ? LP_MAX_GAP_MS : null
+      maxGapMs: validTime ? LP_MAX_GAP_MS : null,
+      observeMs: xWindow ? X_OBSERVE_POLICY.observeMs : null,
+      sweepWindowMs: xWindow ? SWEEP_WINDOW_MS_WIDE : undefined
     })
     : null;
+  observeLogged = false;
   renderGauge();
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
@@ -358,6 +371,14 @@ function trackLine(g) {
       atMs: step.atMs ?? null, yLine: lineProg.yLineOf(sample), yFix,
       peakX: sw ? Math.round(sw.peakX) : null, landedX: sw ? Math.round(sw.landedX) : null
     });
+  }
+  // 관측 창이 닫힌 순간을 한 번만 기록한다 (어떤 문턱으로 바뀌었는지 되짚을 수 있게)
+  if (xWindow && !observeLogged) {
+    const sn = lineProg.observeSnapshot();
+    if (sn?.closed) {
+      observeLogged = true;
+      gazeLog?.meta({ type: 'xWindow', pageId: currentPage, tMs: g.tMs, ...sn, thresholds: lineProg.thresholds });
+    }
   }
   if (newly.length) {
     const set = readByPage.get(currentPage) ?? new Set();

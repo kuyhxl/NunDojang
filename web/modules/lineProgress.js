@@ -33,19 +33,28 @@ export const LP_MAX_GAP_MS = 250;
  *   왜: 시선 x는 단 폭의 70~80%로 눌려 찍히고 그 비율이 회차마다 다르다. 환산하지 않으면
  *   눌린 회차에서 "0.4 × 줄 폭"이 사실상 0.55를 요구하게 되어 성실한 독자가 떨어진다.
  *   기준은 **읽기 전 점 구간에서만** 만든다 (xAnchor.js). 읽는 동안의 표본으로 만들면 순환이다.
+ * @param {number|null} [o.observeMs=null] 주면 쪽의 앞 이 시간 동안 시선 x를 모아, 창이 닫힐 때
+ *   줄바꿈 문턱과 가로 진행 환산을 그 쪽의 관측 범위로 갈아 끼운다 (?xwindow=1, xObserve.js).
+ *   observedX를 직접 주는 것과 달리, 이쪽은 **읽는 동안 스스로 잰다**.
+ * @param {number} [o.sweepWindowMs=400] 줄바꿈 계수기의 창 길이. 11절 제안은 600.
  * @param {number|null} [o.maxGapMs=null] 주면 시간 조건을 **벽시계가 아니라 유효 시간**으로 센다 (?validtime=1).
  *   왜: 지금은 `tMs - 구간 시작`이라, 추적이 5초 끊겨도 그 5초가 읽은 시간으로 계산돼 시간 조건이 공짜로 통과한다.
  *   주면 표본 사이 간격이 maxGapMs 이하일 때만 그 간격을 더한다. 끊긴 동안은 0초로 친다.
  *   기본 null = 지금 동작 그대로. 점수가 바뀌는 변경이라 합의 전에는 주소 플래그로만 켠다.
  */
-export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false, maxGapMs = null, observedX = null }) {
+export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false, maxGapMs = null, observedX = null, observeMs = null, sweepWindowMs = 400 }) {
   const widths = Array.isArray(lineWidths) ? lineWidths.map((w) => (Number.isFinite(w) ? w : 0)) : [];
-  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix });
+  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix,
+    observeMs, sweepWindowMs, maxGapMs, onObserved: (obs) => setScaleFrom(obs) });
   const maxSpeed = maxSpeedRatio * layout.columnPx;          // px/s
   const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제 (글 폭 기준이라 환산하지 않는다)
-  // 글 폭 1px이 시선에서 몇 px으로 찍히는가. 기준점이 없으면 1 (지금 동작 그대로).
-  const xScale = observedX && observedX.max > observedX.min
-    ? (observedX.max - observedX.min) / layout.columnPx : 1;
+  // 글 폭 1px이 시선에서 몇 px으로 찍히는가. 관측 범위가 없으면 1 (지금 동작 그대로).
+  // 창이 닫히면 onObserved로 갈아 끼운다 — 그때부터의 판정에만 적용된다.
+  let xScale = 1;
+  function setScaleFrom(obs) {
+    if (obs && obs.max > obs.min) xScale = (obs.max - obs.min) / layout.columnPx;
+  }
+  setScaleFrom(observedX);
   const read = new Set();
   // 두 가지 구간을 따로 잰다.
   //  - 줄바꿈 구간: 직전 줄바꿈(또는 쪽 시작)부터. 줄바꿈이 잡히면 그 사이 줄 묶음을 이 구간으로 판정한다.
@@ -118,6 +127,11 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
     get lastSweep() { return locker.lastSweep; },
     /** 마지막 묶음 판정의 속사정 (기록·분석용). 벽시계·유효 시간·유효 비율을 함께 준다 */
     get lastGroup() { return lastGroup ? { ...lastGroup } : null; },
+    /** 쪽의 관측 가로 범위 (?xwindow=1일 때만 채워진다) */
+    get observedX() { return locker.observedX; },
+    /** 관측 창과 지금 문턱 (기록·진단용) */
+    observeSnapshot() { return locker.observeSnapshot(); },
+    get thresholds() { return locker.thresholds; },
     /** 지금 y로 보면 몇 번째 줄인가 (기록·비교용) */
     yLineOf: (sample) => locker.yLineOf(sample)
   };
