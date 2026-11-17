@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1660 1180" width="1660" height="1180" font-family="'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic','Helvetica Neue',sans-serif" role="img" aria-label="눈도장 동작 흐름도">
+<rect width="1660" height="1180" fill="#ffffff"/>
+<text x="36" y="48" font-size="27" font-weight="700" fill="#1e293b">눈도장 — 프로그램이 실제로 하는 일</text>
+<text x="36" y="74" font-size="13.5" fill="#64748b">문서를 고정 규격으로 다시 그린 뒤, 시선을 화면 좌표로 바꾸고, 줄마다 "따라 읽었는가"를 판정해 봉인한다.</text>
+<rect x="36" y="96" width="382" height="36" rx="8" fill="#0284c7"/>
+<text x="50" y="120" font-size="15.5" font-weight="700" fill="#ffffff">준비</text>
+<text x="404" y="120" font-size="12" fill="#ffffff" opacity="0.85" text-anchor="end">문서를 측정할 수 있는 모양으로</text>
+<path d="M423.0 108.0 l7 6 l-7 6" fill="none" stroke="#cbd5e1" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="36" y="148" width="382" height="108" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+<rect x="36" y="148" width="4" height="108" rx="2" fill="#0284c7"/>
+<text x="52" y="179" font-size="14.5" font-weight="700" fill="#1e293b">① PDF 첨부</text>
+<text x="52" y="200" font-size="12.5" fill="#1e293b">사용자가 원본 PDF를 올린다.</text>
+<text x="52" y="218" font-size="12.5" fill="#1e293b">원본은 글자 크기·단 수·배율이</text>
+<text x="52" y="236" font-size="12.5" fill="#1e293b">문서마다 제각각이다.</text>
+<path d="M227.0 257 v8" stroke="#bae6fd" stroke-width="2"/>
+<path d="M223.0 263 l4 5 l4 -5" fill="none" stroke="#bae6fd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="36" y="270" width="382" height="186" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+<rect x="36" y="270" width="4" height="186" rx="2" fill="#0284c7"/>
+<text x="52" y="301" font-size="14.5" font-weight="700" fill="#1e293b">② 텍스트 재배치 (reflow)</text>
+<text x="52" y="322" font-size="12.5" fill="#1e293b">PDF.js로 글자를 뽑아 고정 규격으로</text>
+<text x="52" y="340" font-size="12.5" fill="#1e293b">다시 그린다 — 글자 20px, 줄 간격</text>
+<text x="52" y="358" font-size="12.5" fill="#1e293b">40px, 단 폭 800px, 쪽당 12줄.</text>
+<text x="52" y="382" font-size="12.5" font-weight="700" fill="#0284c7">왜 <tspan font-weight="400">문서가 달라도 줄바꿈 눈 이동 폭이</tspan></text>
+<text x="74" y="400" font-size="12.5" fill="#0284c7">같아진다 (측정 조건 통일).</text>
+<text x="74" y="418" font-size="12.5" fill="#0284c7">앱이 줄 수와 각 줄의 위치·폭을</text>
+<text x="74" y="436" font-size="12.5" fill="#0284c7">정확히 안다 — 점수 계산의 전제.</text>
+<path d="M227.0 457 v8" stroke="#bae6fd" stroke-width="2"/>
+<path d="M223.0 463 l4 5 l4 -5" fill="none" stroke="#bae6fd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="36" y="470" width="382" height="216" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+<rect x="36" y="470" width="4" height="216" rx="2" fill="#0284c7"/>
+<text x="52" y="501" font-size="14.5" font-weight="700" fill="#1e293b">핵심 수치 한눈에</text>
+<text x="52" y="522" font-size="12.5" fill="#1e293b">• 재배치 — 글자 20px · 줄 간격 40px</text>
+<text x="65" y="540" font-size="12.5" fill="#1e293b">단 폭 800px · 쪽당 12줄</text>
+<text x="52" y="558" font-size="12.5" fill="#1e293b">• 보정 — 27점(격자 20 + 고개 3</text>
+<text x="65" y="576" font-size="12.5" fill="#1e293b">+ 어두운 화면 4), 점당 1.1초</text>
+<text x="52" y="594" font-size="12.5" fill="#1e293b">• 줄바꿈 — 떨어짐 ≥ 단 폭의 19%,</text>
+<text x="65" y="612" font-size="12.5" fill="#1e293b">착지 ≤ 글 왼쪽에서 단 폭의 25%</text>
+<text x="52" y="630" font-size="12.5" fill="#1e293b">• 줄 인정 — 가로 ≥ 줄 폭의 40%,</text>
+<text x="65" y="648" font-size="12.5" fill="#1e293b">최대 속도 = 단 폭/초 ≈ 2400자/분</text>
+<text x="52" y="666" font-size="12.5" fill="#1e293b">• 통과 — 쪽 점수 80점</text>
+<rect x="438" y="96" width="382" height="36" rx="8" fill="#7c3aed"/>
+<text x="452" y="120" font-size="15.5" font-weight="700" fill="#ffffff">보정</text>
+<text x="806" y="120" font-size="12" fill="#ffffff" opacity="0.85" text-anchor="end">27점 · 약 30초</text>
+<path d="M825.0 108.0 l7 6 l-7 6" fill="none" stroke="#cbd5e1" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438" y="148" width="382" height="168" rx="10" fill="#f5f3ff" stroke="#ddd6fe"/>
+<rect x="438" y="148" width="4" height="168" rx="2" fill="#7c3aed"/>
+<text x="454" y="179" font-size="14.5" font-weight="700" fill="#1e293b">③ 자세 맞춤</text>
+<text x="454" y="200" font-size="12.5" fill="#1e293b">눈꼬리 간격이 영상 폭의 19~27%</text>
+<text x="454" y="218" font-size="12.5" fill="#1e293b">(카메라에서 약 28~38cm), 고개</text>
+<text x="454" y="236" font-size="12.5" fill="#1e293b">기울기 6° 이내로 맞춘다.</text>
+<text x="454" y="260" font-size="12.5" font-weight="700" fill="#7c3aed">왜 <tspan font-weight="400">눈이 크게 잡힐수록 홍채 움직임이 더</tspan></text>
+<text x="476" y="278" font-size="12.5" fill="#7c3aed">많은 픽셀로 보인다 = 분해능.</text>
+<text x="476" y="296" font-size="12.5" fill="#7c3aed">이 자세를 &#x27;기준 자세&#x27;로 저장한다.</text>
+<path d="M629.0 317 v8" stroke="#ddd6fe" stroke-width="2"/>
+<path d="M625.0 323 l4 5 l4 -5" fill="none" stroke="#ddd6fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438" y="330" width="382" height="204" rx="10" fill="#f5f3ff" stroke="#ddd6fe"/>
+<rect x="438" y="330" width="4" height="204" rx="2" fill="#7c3aed"/>
+<text x="454" y="361" font-size="14.5" font-weight="700" fill="#1e293b">④ 20점 격자 (흰 화면)</text>
+<text x="454" y="382" font-size="12.5" fill="#1e293b">5×4 격자를 ㄹ자로 훑는다.</text>
+<text x="454" y="400" font-size="12.5" fill="#1e293b">점당 200ms 대기 + 900ms 수집.</text>
+<text x="454" y="424" font-size="12.5" font-weight="700" fill="#7c3aed">왜 <tspan font-weight="400">아래 식의 계수를 푼다:</tspan></text>
+<text x="476" y="442" font-size="12" fill="#7c3aed" font-style="italic">화면좌표 = w₀ + w₁·눈좌우</text>
+<text x="476" y="460" font-size="12" fill="#7c3aed" font-style="italic">  + w₂·눈위아래 + w₃·고개좌우</text>
+<text x="476" y="478" font-size="12" fill="#7c3aed" font-style="italic">  + w₄·고개위아래</text>
+<text x="476" y="496" font-size="12.5" fill="#7c3aed">가로·세로가 같은 재료를 쓰므로</text>
+<text x="476" y="514" font-size="12.5" fill="#7c3aed">세로 점이 가로 정확도에도 필요하다.</text>
+<path d="M629.0 535 v8" stroke="#ddd6fe" stroke-width="2"/>
+<path d="M625.0 541 l4 5 l4 -5" fill="none" stroke="#ddd6fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438" y="548" width="382" height="150" rx="10" fill="#f5f3ff" stroke="#ddd6fe"/>
+<rect x="438" y="548" width="4" height="150" rx="2" fill="#7c3aed"/>
+<text x="454" y="579" font-size="14.5" font-weight="700" fill="#1e293b">⑤ 고개 돌림 3점</text>
+<text x="454" y="600" font-size="12.5" fill="#1e293b">가운데 점을 계속 보면서 고개만</text>
+<text x="454" y="618" font-size="12.5" fill="#1e293b">왼쪽·오른쪽·위로 5~15° 돌린다.</text>
+<text x="454" y="642" font-size="12.5" font-weight="700" fill="#7c3aed">왜 <tspan font-weight="400">보정 중 머리가 고정이면 고개 계수를</tspan></text>
+<text x="476" y="660" font-size="12.5" fill="#7c3aed">못 구한다 → 읽다가 고개가 조금</text>
+<text x="476" y="678" font-size="12.5" fill="#7c3aed">돌면 좌표가 통째로 밀린다.</text>
+<path d="M629.0 699 v8" stroke="#ddd6fe" stroke-width="2"/>
+<path d="M625.0 705 l4 5 l4 -5" fill="none" stroke="#ddd6fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438" y="712" width="382" height="132" rx="10" fill="#f5f3ff" stroke="#ddd6fe"/>
+<rect x="438" y="712" width="4" height="132" rx="2" fill="#7c3aed"/>
+<text x="454" y="743" font-size="14.5" font-weight="700" fill="#1e293b">⑥ 어두운 화면 4점</text>
+<text x="454" y="764" font-size="12.5" fill="#1e293b">검정 배경에서 네 점을 더 본다.</text>
+<text x="454" y="788" font-size="12.5" font-weight="700" fill="#7c3aed">왜 <tspan font-weight="400">어두우면 동공이 커지고 홍채 중심</tspan></text>
+<text x="476" y="806" font-size="12.5" fill="#7c3aed">추정이 달라진다. 두 밝기의 표본을</text>
+<text x="476" y="824" font-size="12.5" fill="#7c3aed">섞어 맞춰 밝기가 바뀌어도 버틴다.</text>
+<path d="M629.0 845 v8" stroke="#ddd6fe" stroke-width="2"/>
+<path d="M625.0 851 l4 5 l4 -5" fill="none" stroke="#ddd6fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="438" y="858" width="382" height="150" rx="10" fill="#f5f3ff" stroke="#ddd6fe"/>
+<rect x="438" y="858" width="4" height="150" rx="2" fill="#7c3aed"/>
+<text x="454" y="889" font-size="14.5" font-weight="700" fill="#1e293b">⑦ 보정 판정</text>
+<text x="454" y="910" font-size="12.5" fill="#1e293b">점을 하나씩 빼고 다시 맞춰 오차를</text>
+<text x="454" y="928" font-size="12.5" fill="#1e293b">잰다 (leave-one-out).</text>
+<text x="454" y="952" font-size="12.5" font-weight="700" fill="#7c3aed">왜 <tspan font-weight="400">가로 오차가 화면 폭 20%를 넘으면</tspan></text>
+<text x="476" y="970" font-size="12.5" fill="#7c3aed">보정 실패 → 재시도. 세로만 나쁘면</text>
+<text x="476" y="988" font-size="12.5" fill="#7c3aed">&#x27;세로는 안 쓴다&#x27;로 통과.</text>
+<rect x="840" y="96" width="382" height="36" rx="8" fill="#059669"/>
+<text x="854" y="120" font-size="15.5" font-weight="700" fill="#ffffff">읽기</text>
+<text x="1208" y="120" font-size="12" fill="#ffffff" opacity="0.85" text-anchor="end">쪽마다 되풀이</text>
+<path d="M1227.0 108.0 l7 6 l-7 6" fill="none" stroke="#cbd5e1" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="840" y="148" width="382" height="168" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="840" y="148" width="4" height="168" rx="2" fill="#059669"/>
+<text x="856" y="179" font-size="14.5" font-weight="700" fill="#1e293b">⑧ 첫 줄 앵커</text>
+<text x="856" y="200" font-size="12.5" fill="#1e293b">읽기 자세에서 PDF 첫 줄 옆 점을</text>
+<text x="856" y="218" font-size="12.5" fill="#1e293b">1~2초 본다. 쪽이 바뀔 때마다.</text>
+<text x="856" y="242" font-size="12.5" font-weight="700" fill="#059669">왜 <tspan font-weight="400">기울기(배율)는 그대로 두고 치우침만</tspan></text>
+<text x="878" y="260" font-size="12.5" fill="#059669">되민다. 보정 자세와 읽기 자세의</text>
+<text x="878" y="278" font-size="12.5" fill="#059669">미세한 차이로 좌표가 통째로</text>
+<text x="878" y="296" font-size="12.5" fill="#059669">흘러내리는 것(실측 2~6줄)을 되돌린다.</text>
+<path d="M1031.0 317 v8" stroke="#a7f3d0" stroke-width="2"/>
+<path d="M1027.0 323 l4 5 l4 -5" fill="none" stroke="#a7f3d0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="840" y="330" width="382" height="108" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="840" y="330" width="4" height="108" rx="2" fill="#059669"/>
+<text x="856" y="361" font-size="14.5" font-weight="700" fill="#1e293b">⑨ 시선 측정 (30fps)</text>
+<text x="856" y="382" font-size="12.5" fill="#1e293b">홍채 랜드마크 → 화면 좌표.</text>
+<text x="856" y="400" font-size="12.5" fill="#1e293b">깜빡임·화면 밖·저품질 프레임은</text>
+<text x="856" y="418" font-size="12.5" fill="#1e293b">빼고 쓴다.</text>
+<path d="M1031.0 439 v8" stroke="#a7f3d0" stroke-width="2"/>
+<path d="M1027.0 445 l4 5 l4 -5" fill="none" stroke="#a7f3d0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="840" y="452" width="382" height="150" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="840" y="452" width="4" height="150" rx="2" fill="#059669"/>
+<text x="856" y="483" font-size="14.5" font-weight="700" fill="#1e293b">⑩ 줄 추적</text>
+<text x="856" y="504" font-size="12.5" fill="#1e293b">가로 되돌림을 찾는다 — x가 단 폭의</text>
+<text x="856" y="522" font-size="12.5" fill="#1e293b">19% 이상 왼쪽으로 떨어져 왼쪽 25%</text>
+<text x="856" y="540" font-size="12.5" fill="#1e293b">안에 착지하면 &#x27;한 줄 끝&#x27;.</text>
+<text x="856" y="564" font-size="12.5" font-weight="700" fill="#059669">왜 <tspan font-weight="400">짧은 줄은 되돌림이 안 생기므로</tspan></text>
+<text x="878" y="582" font-size="12.5" fill="#059669">머문 시간으로 넘긴다.</text>
+<path d="M1031.0 603 v8" stroke="#a7f3d0" stroke-width="2"/>
+<path d="M1027.0 609 l4 5 l4 -5" fill="none" stroke="#a7f3d0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="840" y="616" width="382" height="156" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="840" y="616" width="4" height="156" rx="2" fill="#059669"/>
+<text x="856" y="647" font-size="14.5" font-weight="700" fill="#1e293b">⑪ 줄 인정</text>
+<text x="856" y="668" font-size="12.5" fill="#1e293b">두 조건을 모두 넘겨야 &#x27;읽음&#x27;:</text>
+<text x="856" y="692" font-size="12.5" fill="#1e293b">• 가로 진행 ≥ 줄 폭의 40%</text>
+<text x="856" y="710" font-size="12.5" fill="#1e293b">• 머문 시간 ≥ 줄 폭 ÷ 최대 속도</text>
+<text x="856" y="734" font-size="12.5" font-weight="700" fill="#059669">왜 <tspan font-weight="400">앞은 한 점 응시·세로 훑기를,</tspan></text>
+<text x="878" y="752" font-size="12.5" fill="#059669">뒤는 휙 넘기기를 막는다.</text>
+<path d="M1031.0 773 v8" stroke="#a7f3d0" stroke-width="2"/>
+<path d="M1027.0 779 l4 5 l4 -5" fill="none" stroke="#a7f3d0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="840" y="786" width="382" height="108" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+<rect x="840" y="786" width="4" height="108" rx="2" fill="#059669"/>
+<text x="856" y="817" font-size="14.5" font-weight="700" fill="#1e293b">⑫ 쪽 점수</text>
+<text x="856" y="838" font-size="12.5" fill="#1e293b">읽은 줄 ÷ 전체 줄 × 100.</text>
+<text x="856" y="856" font-size="12.5" fill="#1e293b">80점 이상 + 품질 관문(유효 측정</text>
+<text x="856" y="874" font-size="12.5" fill="#1e293b">시간 비율)을 넘으면 그 쪽 통과.</text>
+<rect x="1242" y="96" width="382" height="36" rx="8" fill="#d97706"/>
+<text x="1256" y="120" font-size="15.5" font-weight="700" fill="#ffffff">봉인</text>
+<text x="1610" y="120" font-size="12" fill="#ffffff" opacity="0.85" text-anchor="end">증거를 문서에 박는다</text>
+<rect x="1242" y="148" width="382" height="90" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+<rect x="1242" y="148" width="4" height="90" rx="2" fill="#d97706"/>
+<text x="1258" y="179" font-size="14.5" font-weight="700" fill="#1e293b">⑬ 모든 쪽 통과</text>
+<text x="1258" y="200" font-size="12.5" fill="#1e293b">쪽마다의 통과를 모아 문서 전체가</text>
+<text x="1258" y="218" font-size="12.5" fill="#1e293b">완료되면 다음으로 넘어간다.</text>
+<path d="M1433.0 239 v8" stroke="#fde68a" stroke-width="2"/>
+<path d="M1429.0 245 l4 5 l4 -5" fill="none" stroke="#fde68a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1242" y="252" width="382" height="90" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+<rect x="1242" y="252" width="4" height="90" rx="2" fill="#d97706"/>
+<text x="1258" y="283" font-size="14.5" font-weight="700" fill="#1e293b">⑭ 서명 + 동의</text>
+<text x="1258" y="304" font-size="12.5" fill="#1e293b">손글씨 서명을 받고 동의 항목을</text>
+<text x="1258" y="322" font-size="12.5" fill="#1e293b">확인받는다.</text>
+<path d="M1433.0 343 v8" stroke="#fde68a" stroke-width="2"/>
+<path d="M1429.0 349 l4 5 l4 -5" fill="none" stroke="#fde68a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1242" y="356" width="382" height="132" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+<rect x="1242" y="356" width="4" height="132" rx="2" fill="#d97706"/>
+<text x="1258" y="387" font-size="14.5" font-weight="700" fill="#1e293b">⑮ 봉인 PDF 발급</text>
+<text x="1258" y="408" font-size="12.5" fill="#1e293b">문서 해시, 쪽별 점수, 보정 품질,</text>
+<text x="1258" y="426" font-size="12.5" fill="#1e293b">점수 정책 버전을 함께 박아 넣는다.</text>
+<text x="1258" y="450" font-size="12.5" font-weight="700" fill="#d97706">왜 <tspan font-weight="400">나중에 &#x27;무엇을 근거로 통과했는지&#x27;를</tspan></text>
+<text x="1280" y="468" font-size="12.5" fill="#d97706">되짚을 수 있어야 한다.</text>
+<rect x="36" y="1032" width="1588" height="52" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+<text x="54" y="1054" font-size="13" font-weight="700" fill="#1e293b">측정하는 동안 계속 — 자세 감시</text>
+<text x="54" y="1072" font-size="12.5" fill="#64748b">기준 자세에서 벗어나면(얼굴 이동 0.25 눈꼬리폭 · 크기 변화 12% · 고개 돌림 0.08) 경고하고 보정·측정을 멈춘다. 자세가 변하면 ④에서 구한 계수가 더 이상 맞지 않기 때문이다.</text>
+<line x1="36" y1="1098" x2="1624" y2="1098" stroke="#cbd5e1"/>
+<text x="36" y="1120" font-size="13.5" fill="#1e293b"><tspan font-weight="700" fill="#059669">증명하는 것 </tspan>각 줄을 따라 읽는 눈 움직임이, 그 줄을 읽을 만한 시간 동안 관찰되었다.</text>
+<text x="36" y="1142" font-size="13.5" fill="#1e293b"><tspan font-weight="700" fill="#b91c1c">증명하지 않는 것 </tspan>이해. 1000Hz 장비로도 이해도 예측은 59.2%로, 글만 보고 맞히는 예측(58.7%)을 넘지 못한다.</text>
+</svg>

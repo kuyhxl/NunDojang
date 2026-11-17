@@ -10,8 +10,9 @@ import { createSignaturePad, imageFileToPngDataUrl, sha256OfDataUrl } from './mo
 import { issueSeal } from './modules/sealExport.js';
 import { samplesCsv, eventsCsv, sessionJson, download } from './modules/logExport.js';
 import { formatScore, expectedReturnSweeps, expectedDetectableSweeps, auxScore, AUX_POLICY_VERSION, AUX_WEIGHT_RAMP } from './modules/pageScoring.js';
-import { createGazeSweepCounter, sweepOptionsFor } from './modules/gazeSweep.js';
-import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore } from './modules/lineProgress.js';
+import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS, SWEEP_WINDOW_MS_WIDE } from './modules/gazeSweep.js';
+import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore, LP_MAX_GAP_MS } from './modules/lineProgress.js';
+import { X_OBSERVE_POLICY } from './modules/xObserve.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -29,16 +30,33 @@ const yLock = urlParams.has('ylock');
 // 세로 이득이 0.53이고 보정 후에도 오차가 ±2.1줄(줄 간격의 두 배)이라 y로는 줄을 지목할 수 없다.
 // 켜면 더 나쁜 추정이 x 줄바꿈을 덮어써 읽은 줄이 7% 줄어든다 (docs/comprehension_evidence.md 9-6).
 const yFix = urlParams.has('yfix');
+// ?validtime=1 → 시간 조건을 벽시계가 아니라 유효 시간으로 센다 (개발용 시험, 팀 합의 전).
+// 왜: 지금은 추적이 끊긴 시간도 읽은 시간으로 계산돼, 줄 인정의 시간 조건이 공짜로 통과한다.
+//     줄바꿈 계수기도 끊김을 가로지른 x 이동을 줄바꿈으로 세고 있다.
+// 점수가 바뀌므로 기본값은 꺼짐이고, 합의 전에는 이 플래그로만 켠다 (docs/decisions.md 열린 제안).
+const validTime = urlParams.has('validtime');
+// ?xwindow=1 → 11절 제안(개발용 시험, 팀 합의 전): 쪽의 앞 8초 동안 시선 x를 모아,
+// 줄바꿈 착지권과 이동 문턱을 **그 쪽의 관측 범위**로 갈아 끼운다. 창 길이도 400 → 600ms.
+// 왜: 착지권이 글의 절대 기하에서 나와서, 시선 x가 눌려 찍히는 정도가 쪽마다 다르면
+//     같은 사람이 같은 글을 더 오래 읽고도 97%와 61%를 받는다 (docs/comprehension_evidence.md 10절).
+// 재생 결과: 전체 78.7% → 84.1%, 거짓 탈락 기록 61.2% → 79.1%, 나빠진 쪽 1개.
+// 순환이 완전히 없어지지는 않는다 — 훑기 대조군으로 확인하기 전에는 합의하지 말 것 (11-3절).
+const xWindow = urlParams.has('xwindow');
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
 const scoreLines = urlParams.get('score') === 'lines';
-const config = reflowParam === 20 || reflowParam === 24 || scoreLines
-  ? Object.freeze({
-      ...DEFAULT_CONFIG,
-      ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
-      ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {})
-    })
+// ?ocr=0 → 사진·스캔 PDF를 글자 인식으로 여는 것을 끈다 (기본 켜짐). ?ocrlang=kor → 인식 언어 바꾸기.
+const ocrOff = urlParams.get('ocr') === '0';
+const ocrLangParam = urlParams.get('ocrlang');
+const configOverrides = {
+  ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
+  ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {}),
+  ...(ocrOff ? { ocrEnabled: false } : {}),
+  ...(ocrLangParam ? { ocrLangs: ocrLangParam } : {})
+};
+const config = Object.keys(configOverrides).length
+  ? Object.freeze({ ...DEFAULT_CONFIG, ...configOverrides })
   : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
@@ -77,6 +95,7 @@ let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 �
 // 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
 const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
+let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
 let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
 const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
@@ -114,10 +133,12 @@ async function openPdfFile(file) {
   await closeDocument();
   try {
     if (pdf.mode === 'reflow') setMsg('viewerMsg', `텍스트를 뽑아 ${pdf.layout.fontPx}px로 다시 배치하는 중…`, '');
-    const { pageCount: n, sourcePageCount } = await pdf.open(file);
+    const { pageCount: n, sourcePageCount, ocr } = await pdf.open(file, { onProgress: showOpenProgress });
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px` : `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow'
+      ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px${ocr ? ' · 글자 인식' : ''}`
+      : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
@@ -130,10 +151,18 @@ async function openPdfFile(file) {
     await goToPage(1);
     setMsg('viewerMsg', '', '');
     checkZoom();
+    // 인식한 글은 틀릴 수 있다. 숨기지 말고 문서를 여는 내내 띄워 둔다 (봉인은 원본 글자를 보증하지 않는다).
+    // 배율 안내보다 뒤에 둔다 — 둘 다 있으면 이쪽이 더 중요하다.
+    if (ocr) setMsg('viewerMsg', `텍스트가 없는 PDF라 글자를 인식해 읽었습니다 (${ocr.langs}, 확신도 ${Math.round(ocr.confidence)}%). 인식이 틀린 글자가 있을 수 있습니다.`, 'warn');
     setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
   }
+}
+/** 문서 여는 동안의 진행 표시. 글자 인식은 쪽당 몇 초씩 걸려 알려 주지 않으면 멈춘 것처럼 보인다. */
+function showOpenProgress(s) {
+  if (s.stage === 'ocr-load') setMsg('viewerMsg', '텍스트가 없는 PDF입니다. 글자 인식을 준비하는 중… (처음 한 번은 오래 걸립니다)', '');
+  else if (s.stage === 'ocr-page') setMsg('viewerMsg', `글자를 읽는 중… ${s.page}/${s.pageCount}쪽`, '');
 }
 for (const id of ['pdfInput', 'pdfInput2']) {
   $(id).addEventListener('change', async (e) => { await openPdfFile(e.target.files?.[0]); e.target.value = ''; });
@@ -223,13 +252,21 @@ async function showPage(pageId) {
   store.registerPage({ pageId: info.pageId, lineCount: info.lineCount, supported: info.supported, unsupportedReason: info.unsupportedReason });
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
-  gazeSweep = pdf.mode === 'reflow' ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx())) : null;
+  const gapMs = validTime ? SWEEP_MAX_GAP_MS : null;
+  // gazeSweep은 보조 점수(기록 전용)라 관측 창을 쓰지 않는다. 줄 판정 쪽만 11절 제안을 받는다.
+  gazeSweep = pdf.mode === 'reflow'
+    ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx(), { maxGapMs: gapMs }))
+    : null;
   lineProg = pdf.mode === 'reflow'
     ? createLineProgress({
       lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
-      lineCenterY: lineCenterYPx, yFix    // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+      lineCenterY: lineCenterYPx, yFix,   // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
+      maxGapMs: validTime ? LP_MAX_GAP_MS : null,
+      observeMs: xWindow ? X_OBSERVE_POLICY.observeMs : null,
+      sweepWindowMs: xWindow ? SWEEP_WINDOW_MS_WIDE : undefined
     })
     : null;
+  observeLogged = false;
   renderGauge();
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
@@ -350,12 +387,25 @@ function trackLine(g) {
       peakX: sw ? Math.round(sw.peakX) : null, landedX: sw ? Math.round(sw.landedX) : null
     });
   }
+  // 관측 창이 닫힌 순간을 한 번만 기록한다 (어떤 문턱으로 바뀌었는지 되짚을 수 있게)
+  if (xWindow && !observeLogged) {
+    const sn = lineProg.observeSnapshot();
+    if (sn?.closed) {
+      observeLogged = true;
+      gazeLog?.meta({ type: 'xWindow', pageId: currentPage, tMs: g.tMs, ...sn, thresholds: lineProg.thresholds });
+    }
+  }
   if (newly.length) {
     const set = readByPage.get(currentPage) ?? new Set();
     for (const k of newly) set.add(k);
     readByPage.set(currentPage, set);
     store.setReadLines(currentPage, set.size);
-    gazeLog?.meta({ type: 'lineRead', pageId: currentPage, lines: newly, total: set.size, lineCount: lineProg.lineCount, tMs: g.tMs });
+    // group: 그 묶음을 인정한 근거 (벽시계·유효 시간·유효 비율). 기록 전용이며 판정에는 쓰지 않는다.
+    // validtime이 꺼져 있어도 유효 비율은 쌓이므로, 끊김이 점수에 얼마나 끼어드는지 나중에 되짚을 수 있다.
+    const grp = lineProg.lastGroup;
+    gazeLog?.meta({ type: 'lineRead', pageId: currentPage, lines: newly, total: set.size, lineCount: lineProg.lineCount, tMs: g.tMs,
+      validTime, group: grp ? { wallMs: Math.round(grp.wallMs), elapsedMs: Math.round(grp.elapsedMs),
+        coverage: grp.coverage === null ? null : Math.round(grp.coverage * 100) / 100, rangePx: Math.round(grp.rangePx) } : null });
     throttledRender();
   }
   if (step || newly.length) renderGauge();
@@ -792,7 +842,8 @@ function resetSeal() {
 // ---------- 내보내기 ----------
 function buildSessionJson() {
   return sessionJson({ snapshot: store.getSnapshot(), detectorConfig: DETECTOR_CONFIG, blinkConfig: BLINK_CONFIG,
-    cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE });
+    cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE,
+    ocr: pdf?.ocrInfo ?? null });
 }
 $('dlSamplesBtn').addEventListener('click', () => store && download('samples.csv', samplesCsv(store.getLogs().samples), 'text/csv'));
 $('dlEventsBtn').addEventListener('click', () => store && download('events.csv', eventsCsv(store.getLogs().events), 'text/csv'));

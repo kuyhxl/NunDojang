@@ -15,6 +15,10 @@ export const LINE_PROGRESS_POLICY = 'line-progress/0.1.0-dev';
 export const LP_X_RATIO = 0.4;
 /** 최대 읽기 속도: 초당 단 폭 1개 (800px 단 → 800px/s, 실측 평균 190~350px/s의 2~4배) */
 export const LP_MAX_SPEED_RATIO = 1.0;
+/** 표본이 이보다 오래 끊기면 그 사이는 읽은 시간으로 세지 않는다 (ms).
+ *  A(민서)의 측정 시제품이 쓰는 maxGapMs 250과 같은 값이다 — 방법만 가져왔고 코드는 옮기지 않았다.
+ *  (출처: PR #14 HorizontalDetector의 유효 시간 회계. 그 구현은 GPL-3.0이라 제품에 넣지 않는다) */
+export const LP_MAX_GAP_MS = 250;
 
 /**
  * @param {object} o
@@ -24,28 +28,56 @@ export const LP_MAX_SPEED_RATIO = 1.0;
  * @param {null|((k:number)=>number)} [o.lineCenterY=null] 줄 k 중심의 화면 y. 주면 `yLineOf`로 비교·기록할 수 있다 (그것만으로는 동작이 바뀌지 않는다).
  * @param {boolean} [o.yFix=false] true일 때만 y로 줄 번호를 바로잡는다 (?yfix=1).
  *   **켜지 말 것** — 세로 이득 0.53·오차 ±2.1줄로 측정되어 폐기한 안이다 (docs/comprehension_evidence.md 9-6).
+ * @param {{min:number,max:number}|null} [o.observedX=null] 읽기 전 기준점으로 잰 **이 사람의 가로 범위** (?xanchor=1).
+ *   주면 가로 진행 조건을 시선 폭 기준으로 환산한다 — `시선 범위 ≥ 0.4 × 줄 폭 × (관측 폭 ÷ 단 폭)`.
+ *   왜: 시선 x는 단 폭의 70~80%로 눌려 찍히고 그 비율이 회차마다 다르다. 환산하지 않으면
+ *   눌린 회차에서 "0.4 × 줄 폭"이 사실상 0.55를 요구하게 되어 성실한 독자가 떨어진다.
+ *   기준은 **읽기 전 점 구간에서만** 만든다 (xAnchor.js). 읽는 동안의 표본으로 만들면 순환이다.
+ * @param {number|null} [o.observeMs=null] 주면 쪽의 앞 이 시간 동안 시선 x를 모아, 창이 닫힐 때
+ *   줄바꿈 문턱과 가로 진행 환산을 그 쪽의 관측 범위로 갈아 끼운다 (?xwindow=1, xObserve.js).
+ *   observedX를 직접 주는 것과 달리, 이쪽은 **읽는 동안 스스로 잰다**.
+ * @param {number} [o.sweepWindowMs=400] 줄바꿈 계수기의 창 길이. 11절 제안은 600.
+ * @param {number|null} [o.maxGapMs=null] 주면 시간 조건을 **벽시계가 아니라 유효 시간**으로 센다 (?validtime=1).
+ *   왜: 지금은 `tMs - 구간 시작`이라, 추적이 5초 끊겨도 그 5초가 읽은 시간으로 계산돼 시간 조건이 공짜로 통과한다.
+ *   주면 표본 사이 간격이 maxGapMs 이하일 때만 그 간격을 더한다. 끊긴 동안은 0초로 친다.
+ *   기본 null = 지금 동작 그대로. 점수가 바뀌는 변경이라 합의 전에는 주소 플래그로만 켠다.
  */
-export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false }) {
+export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP_X_RATIO, maxSpeedRatio = LP_MAX_SPEED_RATIO, lineCenterY = null, yFix = false, maxGapMs = null, observedX = null, observeMs = null, sweepWindowMs = 400 }) {
   const widths = Array.isArray(lineWidths) ? lineWidths.map((w) => (Number.isFinite(w) ? w : 0)) : [];
-  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix });
+  const locker = createLineLocker({ lineWidths: widths, layout, textLeftPx, lineCenterY, yFix,
+    observeMs, sweepWindowMs, maxGapMs, onObserved: (obs) => setScaleFrom(obs) });
   const maxSpeed = maxSpeedRatio * layout.columnPx;          // px/s
-  const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제
+  const shortMin = SWEEP_DROP_RATIO * layout.columnPx;        // 이보다 짧으면 가로 진행 면제 (글 폭 기준이라 환산하지 않는다)
+  // 글 폭 1px이 시선에서 몇 px으로 찍히는가. 관측 범위가 없으면 1 (지금 동작 그대로).
+  // 창이 닫히면 onObserved로 갈아 끼운다 — 그때부터의 판정에만 적용된다.
+  let xScale = 1;
+  function setScaleFrom(obs) {
+    if (obs && obs.max > obs.min) xScale = (obs.max - obs.min) / layout.columnPx;
+  }
+  setScaleFrom(observedX);
   const read = new Set();
   // 두 가지 구간을 따로 잰다.
   //  - 줄바꿈 구간: 직전 줄바꿈(또는 쪽 시작)부터. 줄바꿈이 잡히면 그 사이 줄 묶음을 이 구간으로 판정한다.
   //    머묾 넘김은 짧은 줄에서 늦게 일어날 수 있어, 그 뒤 줄의 시간을 짧게 잡지 않도록 이 구간을 끊지 않는다.
   //  - 줄 구간: 지금 줄에 들어온 때부터. 지금 줄(마지막 줄 포함)을 그 자리에서 판정할 때 쓴다.
-  const span = () => ({ startMs: null, startLine: 0, minX: Infinity, maxX: -Infinity });
+  const span = () => ({ startMs: null, startLine: 0, minX: Infinity, maxX: -Infinity, validMs: 0 });
   let sweepSpan = span(), lineSpan = span();
-  const restart = (sp, t, x, line) => { sp.startMs = t; sp.startLine = line; sp.minX = sp.maxX = Number.isFinite(x) ? x : NaN; if (!Number.isFinite(sp.minX)) { sp.minX = Infinity; sp.maxX = -Infinity; } };
+  let lastValidMs = null, prevValid = false, lastGroup = null;
+  const restart = (sp, t, x, line) => { sp.startMs = t; sp.startLine = line; sp.validMs = 0; sp.minX = sp.maxX = Number.isFinite(x) ? x : NaN; if (!Number.isFinite(sp.minX)) { sp.minX = Infinity; sp.maxX = -Infinity; } };
   const widen = (sp, x) => { if (Number.isFinite(x)) { sp.minX = Math.min(sp.minX, x); sp.maxX = Math.max(sp.maxX, x); } };
 
   /** from..toExcl−1 줄 묶음이 sp 구간 동안 읽은 것으로 볼 만한가 */
   function groupOk(sp, from, toExcl, tMs) {
     let sum = 0, longest = 0;
     for (let k = from; k < toExcl; k++) { sum += widths[k]; longest = Math.max(longest, widths[k]); }
-    const timeOk = (tMs - sp.startMs) / 1000 >= sum / maxSpeed;
-    const xOk = longest < shortMin || sp.maxX - sp.minX >= xRatio * longest;
+    const wallMs = tMs - sp.startMs;
+    const elapsedMs = maxGapMs === null ? wallMs : sp.validMs;   // 끊긴 시간은 읽은 시간이 아니다
+    const timeOk = elapsedMs / 1000 >= sum / maxSpeed;
+    const needPx = xRatio * longest * xScale;
+    const xOk = longest < shortMin || sp.maxX - sp.minX >= needPx;
+    lastGroup = { from, to: toExcl, sumPx: sum, longestPx: longest, wallMs, elapsedMs,
+      coverage: wallMs > 0 ? sp.validMs / wallMs : null, rangePx: sp.maxX - sp.minX,
+      needPx, xScale, timeOk, xOk };
     return timeOk && xOk;
   }
   function credit(from, toExcl, out) {
@@ -58,9 +90,13 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
    */
   function push(sample, { credit: canCredit = true } = {}) {
     const newly = [];
-    if (!sample?.valid || !Number.isFinite(sample.tMs)) return { step: null, newly };
+    if (!sample?.valid || !Number.isFinite(sample.tMs)) { prevValid = false; return { step: null, newly }; }
     const t = sample.tMs, x = sample.xPx;
     if (sweepSpan.startMs === null) { restart(sweepSpan, t, x, 0); restart(lineSpan, t, x, 0); }
+    // 바로 앞 표본도 유효했고 그 사이가 너무 벌어지지 않았을 때만 그 간격을 읽은 시간으로 더한다.
+    const dt = lastValidMs === null ? 0 : t - lastValidMs;
+    if (prevValid && dt > 0 && (maxGapMs === null || dt <= maxGapMs)) { sweepSpan.validMs += dt; lineSpan.validMs += dt; }
+    lastValidMs = t; prevValid = true;
     widen(sweepSpan, x); widen(lineSpan, x);
     const step = locker.push(sample);
     if (step?.cause === 'sweep') {
@@ -89,6 +125,13 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
     get lineCount() { return widths.length; },
     /** 마지막 줄바꿈의 시각·위치 (기록·분석용) */
     get lastSweep() { return locker.lastSweep; },
+    /** 마지막 묶음 판정의 속사정 (기록·분석용). 벽시계·유효 시간·유효 비율을 함께 준다 */
+    get lastGroup() { return lastGroup ? { ...lastGroup } : null; },
+    /** 쪽의 관측 가로 범위 (?xwindow=1일 때만 채워진다) */
+    get observedX() { return locker.observedX; },
+    /** 관측 창과 지금 문턱 (기록·진단용) */
+    observeSnapshot() { return locker.observeSnapshot(); },
+    get thresholds() { return locker.thresholds; },
     /** 지금 y로 보면 몇 번째 줄인가 (기록·비교용) */
     yLineOf: (sample) => locker.yLineOf(sample)
   };

@@ -6,7 +6,8 @@
 //            줄 수는 앱이 직접 배치한 값이라 추정이 아니다. 11/3 회의 결정.
 //  'original' 원본 그대로 그리고 줄 수는 텍스트 y 좌표로 추정한다 (예전 방식, 비교·디버그용).
 import { resolveAssetUrls } from './config.js';
-import { reflowLayout, reflowDocument, loadReflowFont, createMeasure, drawPage, textLines } from './reflow.js';
+import { reflowLayout, reflowDocument, loadReflowFont, createMeasure, drawPage, textLines, layoutParagraphs } from './reflow.js';
+import { OCR, createOcrEngine, ocrDocument } from './ocr.js';
 
 export async function createPdfManager({ canvasElement, config }) {
   const urls = resolveAssetUrls(config);
@@ -16,6 +17,7 @@ export async function createPdfManager({ canvasElement, config }) {
   let doc = null;
   let reflowed = null;     // {pages: [[{kind,text}]], sourcePages}
   let renderSeq = 0;
+  let ocrInfo = null;      // 글자 인식으로 연 문서면 {langs, confidence, scale, version}
 
   try {
     pdfjs = await import(urls.pdfjsModuleUrl);
@@ -25,7 +27,12 @@ export async function createPdfManager({ canvasElement, config }) {
       { code: 'pdfjs_missing', cause: e, recoverable: false });
   }
 
-  async function open(file) {
+  /**
+   * @param file PDF 파일
+   * @param {{onProgress?: (s:{stage:string, page?:number, pageCount?:number, ratio?:number}) => void}} [o]
+   *   stage: 'reflow' | 'ocr-load' | 'ocr-page'. 글자 인식은 쪽당 몇 초씩 걸려 진행을 알려야 한다.
+   */
+  async function open(file, { onProgress } = {}) {
     await close();
     const data = new Uint8Array(await file.arrayBuffer());
     try {
@@ -36,12 +43,54 @@ export async function createPdfManager({ canvasElement, config }) {
     if (mode === 'original') return { pageCount: doc.numPages, sourcePageCount: doc.numPages, mode };
 
     await loadReflowFont(urls.reflowFontUrl);
+    onProgress?.({ stage: 'reflow' });
     reflowed = await reflowDocument(doc, createMeasure(layout), layout, { OPS: pdfjs.OPS });
-    if (reflowed.pages.length === 0) {
+    if (reflowed.pages.length === 0) await openByOcr(onProgress);
+    return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode, ocr: ocrInfo };
+  }
+
+  /**
+   * 텍스트 층이 없는 사진·스캔 PDF: 쪽을 그림으로 그려 글자를 읽고 그 글로 재배치한다.
+   * 인식한 글이라 틀릴 수 있다 — 부른 쪽에서 반드시 사용자에게 알려야 한다 (ocrInfo).
+   */
+  async function openByOcr(onProgress) {
+    const noText = () => Object.assign(
+      new Error('이 PDF에서 텍스트를 찾지 못했습니다. 스캔한 이미지 PDF는 다시 배치할 수 없습니다.'),
+      { code: 'pdf_no_text', recoverable: true });
+    if (config.ocrEnabled === false) { await close(); throw noText(); }
+
+    const measure = createMeasure(layout);
+    let engine = null;
+    try {
+      onProgress?.({ stage: 'ocr-load' });
+      engine = await createOcrEngine({
+        moduleUrl: urls.tesseractModuleUrl, workerUrl: urls.tesseractWorkerUrl,
+        coreUrl: urls.tesseractCoreUrl, langUrl: urls.tesseractLangUrl,
+        langs: config.ocrLangs ?? OCR.langs
+      });
+      const r = await ocrDocument(doc, {
+        engine,
+        onProgress: (p) => onProgress?.({ stage: 'ocr-page', ...p })
+      });
+      const pages = layoutParagraphs(r.paragraphs, measure, layout);
+      const confidence = r.pageConfidences.length
+        ? r.pageConfidences.reduce((s, c) => s + c, 0) / r.pageConfidences.length : 0;
+      if (pages.length === 0 || confidence < OCR.minPageConfidence) {
+        await close();
+        throw Object.assign(
+          new Error(`글자를 읽어 봤지만 알아볼 수 있는 글이 없습니다 (확신도 ${Math.round(confidence)}%). 더 선명한 PDF가 필요합니다.`),
+          { code: 'ocr_unreadable', recoverable: true });
+      }
+      reflowed = { pages, sourcePages: doc.numPages, paragraphs: r.paragraphs };
+      ocrInfo = { langs: engine.langs, confidence, scale: r.scale, version: OCR.version };
+    } catch (e) {
+      if (e?.code === 'ocr_unreadable') throw e;
       await close();
-      throw Object.assign(new Error('이 PDF에서 텍스트를 찾지 못했습니다. 스캔한 이미지 PDF는 다시 배치할 수 없습니다.'), { code: 'pdf_no_text', recoverable: true });
+      if (e?.code === 'ocr_missing') throw e;        // 자산이 없다 — 안내가 다르다
+      throw Object.assign(noText(), { cause: e });
+    } finally {
+      await engine?.terminate();
     }
-    return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode };
   }
 
   async function renderPage(pageId) {
@@ -103,14 +152,14 @@ export async function createPdfManager({ canvasElement, config }) {
 
   /** 재배치 결과 전체 (계약 밖). 정답 파일·시험용. */
   function getReflow() {
-    return reflowed ? { version: layout.version, layout: { ...layout }, sourcePages: reflowed.sourcePages, pages: reflowed.pages } : null;
+    return reflowed ? { version: layout.version, layout: { ...layout }, sourcePages: reflowed.sourcePages, pages: reflowed.pages, ocr: ocrInfo } : null;
   }
 
   async function close() {
     renderSeq++;
     if (doc) { try { await doc.destroy(); } catch (_) { /* ignore */ } }
-    doc = null; reflowed = null;
+    doc = null; reflowed = null; ocrInfo = null;
   }
 
-  return { open, renderPage, getPageText, getReflow, close, mode, layout };
+  return { open, renderPage, getPageText, getReflow, close, mode, layout, get ocrInfo() { return ocrInfo; } };
 }

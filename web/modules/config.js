@@ -19,6 +19,12 @@ export const DEFAULT_CONFIG = Object.freeze({
   viewMode: 'reflow',            // 'reflow' = 13px 한 단 재배치(기본, 11/3 결정) · 'original' = 원본 그대로(비교용)
   reflowSize: 13,                // 재배치 글자 크기. 20·24 = 큰 글자 시험판(개발용, 주소에 ?reflow=20 또는 24, 팀 합의 전)
   reflowFontPath: './vendor/fonts/NotoSansKR-Regular.ttf',  // 재배치 글꼴. demo/13px PDF와 같은 글꼴이라 줄 나눔이 같다
+  ocrEnabled: true,              // 텍스트 층이 없는 사진·스캔 PDF를 글자 인식으로 열어 본다 (주소에 ?ocr=0이면 끈다)
+  ocrLangs: 'kor+eng',           // 인식 언어. vendor/tesseract/lang 에 받아 둔 것만 쓸 수 있다 (?ocrlang=kor)
+  tesseractModulePath: './vendor/tesseract/tesseract.esm.min.js',
+  tesseractWorkerPath: './vendor/tesseract/worker.min.js',
+  tesseractCorePath: './vendor/tesseract/core/',
+  tesseractLangPath: './vendor/tesseract/lang/',
   mediaPipeWasmPath: './vendor/mediapipe/wasm',
   faceModelPath: './models/face_landmarker.task',
   pdfWorkerPath: './vendor/pdfjs/pdf.worker.mjs',
@@ -65,7 +71,11 @@ export function resolveAssetUrls(config = DEFAULT_CONFIG) {
     reflowFontUrl: new URL(config.reflowFontPath, webBaseUrl).href,
     pdfjsModuleUrl: new URL('./vendor/pdfjs/pdf.mjs', webBaseUrl).href,
     mediapipeModuleUrl: new URL('./vendor/mediapipe/vision_bundle.mjs', webBaseUrl).href,
-    pdfLibModuleUrl: new URL('./vendor/pdf-lib/pdf-lib.esm.min.js', webBaseUrl).href
+    pdfLibModuleUrl: new URL('./vendor/pdf-lib/pdf-lib.esm.min.js', webBaseUrl).href,
+    tesseractModuleUrl: new URL(config.tesseractModulePath ?? DEFAULT_CONFIG.tesseractModulePath, webBaseUrl).href,
+    tesseractWorkerUrl: new URL(config.tesseractWorkerPath ?? DEFAULT_CONFIG.tesseractWorkerPath, webBaseUrl).href,
+    tesseractCoreUrl: new URL(config.tesseractCorePath ?? DEFAULT_CONFIG.tesseractCorePath, webBaseUrl).href,
+    tesseractLangUrl: new URL(config.tesseractLangPath ?? DEFAULT_CONFIG.tesseractLangPath, webBaseUrl).href
   };
 }
 
