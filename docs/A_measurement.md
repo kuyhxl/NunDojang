@@ -665,3 +665,12 @@ C 파일을 추가·교체하는 대신 A 소유 web/dev/viewerLayoutReference.j
 - 공식 MediaPipe 자료는 홍채와 눈 윤곽 좌표를 제공하지만, 홍채 추적 자체가 바라보는 화면 위치를 알려주는 것은 아니라고 명시합니다. 새 특징의 선택과 비교 식은 우리 프로젝트의 검증 전 제안입니다.
 - 근거: https://research.google/blog/mediapipe-iris-real-time-iris-tracking-depth-estimation/ ; https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker?tab=Web
 - 동현 님 기록은 사용하지 않았으며 GitHub 변경도 수행하지 않았습니다.
+
+<!-- A-V078-HANDOFF-20261117 -->
+## A(민서) v7.8 별도 측정 시제품 공유 (2026-11-17)
+
+공유 경로: `web/dev/aPdfMultilineV78/`. 실행·자산 준비는 해당 README_KO.md, 검증 결과는 review/RESULTS_KO.md, C(찬혁) 연결 검토는 review/INTEGRATION_KO.md를 참조합니다.
+
+민서 님의 실제 맥북52cm 시험에서 중간 경계120ms 후보는 1쪽 양쪽4/4, 1쪽왼쪽반복8/0, 2쪽왼쪽반복8/0, 2쪽오른쪽0/4였습니다. 페이지별 조건 충족 영역 수는 [2,0]→[2,0]→[2,1]→[2,2]. 정확한 고유 줄 읽기 비율이나 여러 사용자 성능을 입증한 것은 아닙니다. 최초 경계 유지 시2쪽왼쪽3개로 줄어 중간 점검 의존성이 남습니다.
+
+현재 제품의 홍채상대좌표·복귀후보와 새 화면좌표·영역통과후보는 의미가 다릅니다. 기존 eyeTracker/movementDetector·공통 계약·제품 화면은 이 공유분에서 교체하지 않습니다. 새 dev 경로는 현 소유 규칙상 C 검토를 요청합니다. 원본 로그·눈 영상 특징·다운로드 자산은 PR에서 제외합니다. 실제 서명은 진단 모드로 비활성화입니다.

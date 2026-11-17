@@ -1,0 +1,63 @@
+{
+  "pr-install-fresh": {
+    "passed": true,
+    "preservesLocalADoc": true,
+    "idempotent": true,
+    "existingProductFilesUnchanged": true,
+    "gitPathsConfined": true,
+    "runtimeNotTracked": true,
+    "changedFileCount": 71
+  },
+  "modifiedRuntimeRefused": true,
+  "pr-install-existing": {
+    "passed": true,
+    "preservesLocalADoc": true,
+    "idempotent": true,
+    "existingProductFilesUnchanged": true,
+    "gitPathsConfined": true,
+    "runtimeNotTracked": true,
+    "changedFileCount": 71
+  },
+  "existingAssetsHashCheck": {
+    "verified": true,
+    "dependencyFiles": 195
+  },
+  "assetRestoreFromPinnedArtifact": {
+    "verified": true,
+    "dependencyFiles": 195,
+    "downloadedOrRestored": 0,
+    "productFilesChanged": false
+  },
+  "scientificRuntimeIdenticalToActualV078": true,
+  "runtimeFilesChecked": [
+    "main.mjs",
+    "runner.mjs",
+    "protocol.mjs",
+    "detector.mjs",
+    "anchors.mjs",
+    "ridge.mjs",
+    "measurement-record.mjs",
+    "page-ledger.mjs",
+    "navigation.mjs",
+    "layouts.mjs",
+    "pdf-input.mjs",
+    "text-balance.mjs",
+    "pilot-worker.js",
+    "index.html",
+    "style.css"
+  ],
+  "handoffSyntheticTests": {
+    "passed": 8,
+    "failed": 0
+  },
+  "reviewedMainNodeTests": {
+    "filesPassed": 3,
+    "internalChecksPassed": 106,
+    "failed": 0
+  },
+  "actualMacRetestedDuringPackaging": false,
+  "browserIntegrationPageRetested": false,
+  "actualV078InputsAudited": true,
+  "rawMeasurementsBundled": false,
+  "publicGitMutationsPerformed": false
+}

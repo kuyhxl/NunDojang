@@ -1,0 +1,34 @@
+import {encodeFeatures} from './ridge.mjs';
+const SETTINGS={maxResultAgeMs:250};
+export const SAMPLE_COLUMNS=['schemaVersion','source','sessionId','seq','frameId','captureTMs','resultTMs','mediaTimeSec','resultAgeMs','processingMs',
+ 'phase','stageIndex','targetId','layoutCondition','targetXCssPx','targetYCssPx','targetOnsetMs','analysisStartMs','analysisEndMs','settled',
+ 'faceDetected','eyeState','trackingValid','invalidReason','outsideViewport','networkNormX','networkNormY','filteredNormX','filteredNormY',
+ 'gazeXCssPx','gazeYCssPx','headX','headY','headZ','faceOriginX','faceOriginY','faceOriginZ','adaptCalls',
+ 'featureFitCalls','predictionMethod','eyeFeatureDimension','eyeFeaturesF32Base64','baselineTrackingValid','baselineInvalidReason','baselineOutsideViewport',
+ 'baselineNetworkNormX','baselineNetworkNormY','baselineFilteredNormX','baselineFilteredNormY','baselineGazeXCssPx','baselineGazeYCssPx','leftEAR','rightEAR','meanEAR'];
+export const EVENT_COLUMNS=['schemaVersion','sessionId','event','tMs','phase','stageIndex','targetId','detail'];
+export function numericResult(r,ctx,arrivalMs,viewport,paired=true){
+ const pair=x=>Array.isArray(x)&&x.length===2&&x.every(Number.isFinite);
+ const age=arrivalMs-ctx.captureTMs;
+ const reason=r.errorCode??(!r.faceDetected?'face_not_detected':r.eyeState!=='open'?'eyes_not_open':!pair(r.filtered)?'nonfinite_prediction':
+  !Number.isFinite(age)||age<0?'invalid_result_time':age>SETTINGS.maxResultAgeMs?'result_stale':null);
+ const valid=reason===null,n=r.network,f=r.filtered;
+ const x=pair(f)?(f[0]+.5)*viewport.width:null,y=pair(f)?(f[1]+.5)*viewport.height:null;
+ let extra={};
+ if(paired){
+  const b=numericResult({...r,network:r.baselineNetwork,filtered:r.baselineFiltered,errorCode:r.errorCode==='frame_processing_error'?r.errorCode:null},ctx,arrivalMs,viewport,false);
+  extra={featureFitCalls:r.featureFitCalls??0,predictionMethod:r.primaryMethod??'unspecified',
+   eyeFeatureDimension:Array.isArray(r.eyeFeatures)?r.eyeFeatures.length:null,eyeFeaturesF32Base64:encodeFeatures(r.eyeFeatures),
+   baselineTrackingValid:b.trackingValid,baselineInvalidReason:b.invalidReason,baselineOutsideViewport:b.outsideViewport,
+   baselineNetworkNormX:b.networkNormX,baselineNetworkNormY:b.networkNormY,baselineFilteredNormX:b.filteredNormX,baselineFilteredNormY:b.filteredNormY,
+   baselineGazeXCssPx:b.gazeXCssPx,baselineGazeYCssPx:b.gazeYCssPx};
+ }
+ return {...extra,leftEAR:Number.isFinite(r.leftEAR)?r.leftEAR:null,rightEAR:Number.isFinite(r.rightEAR)?r.rightEAR:null,
+ meanEAR:[r.leftEAR,r.rightEAR].every(Number.isFinite)?(r.leftEAR+r.rightEAR)/2:null,resultAgeMs:age,processingMs:r.processingMs??null,faceDetected:r.faceDetected===true,eyeState:r.eyeState??'unknown',trackingValid:valid,
+ invalidReason:reason,outsideViewport:x!==null&&(x<0||x>viewport.width||y<0||y>viewport.height),
+ networkNormX:pair(n)?n[0]:null,networkNormY:pair(n)?n[1]:null,filteredNormX:pair(f)?f[0]:null,filteredNormY:pair(f)?f[1]:null,
+ gazeXCssPx:valid?x:null,gazeYCssPx:valid?y:null,
+ headX:r.head?.[0]??null,headY:r.head?.[1]??null,headZ:r.head?.[2]??null,
+ faceOriginX:r.origin?.[0]??null,faceOriginY:r.origin?.[1]??null,faceOriginZ:r.origin?.[2]??null,adaptCalls:r.adaptCalls??null};
+}
+export {toCsv as csv} from './core/math.mjs';

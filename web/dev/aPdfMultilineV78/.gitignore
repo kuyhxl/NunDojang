@@ -1,0 +1,23 @@
+# Runtime dependencies: keep local, restore with review/setup_runtime_assets.py
+/assets/
+/vendor/
+# Private recordings and local outputs
+/samples*.csv
+/events*.csv
+/pdf-horizontal-*.csv
+/pdf-horizontal-*.json
+/review/node_modules/
+/review/local-output/
+/review/__pycache__/
+.DS_Store
+
+# Older experiments may still exist in the user's local folder; not this handoff.
+/review/baseline-v063/
+/review/analysis/
+/review/VALIDATION.json
+/review/CHANGELOG_V071.md
+/review/tests/test-*.mjs
+/review/source/private/engine-node.mjs
+/fixtures/*
+!/fixtures/application-two-pages.pdf
+!/fixtures/application-two-pages-source.json

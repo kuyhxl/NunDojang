@@ -1,0 +1,22 @@
+{
+  "handoffRevision": "a-v078-review-handoff/2026-11-17",
+  "runtimeSchema": "nundojang-pdf-horizontal/0.7.8",
+  "reviewedMainCommit": "3892386d9fb1f1c79716177d93a35502ee2f740f",
+  "reviewedMainTitle": "[C] 봉인 PDF 발급 완성과 줄 단위 진행 점수 (단계 5) (#13)",
+  "testedArtifact": {
+    "fileName": "NunDojang_Multiline_v078.zip",
+    "sha256": "478e445191c7447d5bd7c801e6ae867c5e70b78cfd474bb619349a854c6387ce",
+    "libraryFileId": "libfile_2e7f25cdcbf88191acca3bd54b2c99a3"
+  },
+  "actualMacSession": "85f670a8-26cc-4075-b6dc-d148b4a77894",
+  "actualMacFilesObserved": true,
+  "workerSha256": "5522ecc1d8bcaa07061b4ef6ba8f6165aec3207f00eb86e2066d38b3fea048f3",
+  "upstreamWebEyeTrackCommit": "75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c",
+  "entryPoint": "web/dev/aPdfMultilineV78/index.html",
+  "productAdapterImplemented": false,
+  "actualSignatureSaved": false,
+  "uniqueLineReadingVerified": false,
+  "populationAccuracyEstablished": false,
+  "originalReferenceCReflowSha256": "0267af5cfb553f5a678948745e0b361fcf4626e8b22ba251591f53eaf40f9b58",
+  "currentMainReflowSha256": "c1d8ffa653c7ab9e7c4e951728bf8fdfcd71cee5095eb2d3da05585a58a88851"
+}

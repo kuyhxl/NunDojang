@@ -1,0 +1,23 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>눈도장 가로 분리 읽기 v0.7.8 · A(민서)</title><link rel="stylesheet" href="style.css"></head><body>
+<main id="main"><p class="version">A(민서) · 가로 분리 읽기 시제품 v0.7.8 · 읽기 전·중간·후 위치 점검</p><h1>새 PDF의 두 페이지와 반복 읽기 기록을 연결합니다.</h1>
+<p><strong>이번에는 문장을 길게 하여 한 줄의 가로 폭을 넓혔습니다. 글씨16px·줄높이32px·양쪽 네 줄·검출 조건은 유지합니다.</strong> 본문 글씨는16px이며 여러 원본 줄에 걸친 연속 본문 PDF를 사용합니다. 실제 PDF에서 추출한 글을 좌우 두 영역에 나누어 표시합니다. 관찰 기록은 원본 페이지와 내용 범위에 연결합니다. 가로 위치로 글을 구분하고, 각 글 안에서 왼쪽에서 오른쪽으로 이동한 기록을 확인합니다.</p>
+<p><input id="pdfInput" type="file" accept="application/pdf,.pdf"><button id="samplePdf">두 쪽 시험 PDF 불러오기</button></p><p id="pdfSummary">시험 PDF를 불러옵니다. 이번에는 새로운 두 쪽 PDF로 4회 시험합니다.</p><details><summary>추출한 글 미리보기</summary><pre id="pdfPreview"></pre></details><ol><li>점9개와 위치 점6개로 기준을 준비합니다.</li><li>1회차: 1쪽 왼쪽 네 줄 한 번 → 오른쪽 네 줄 한 번.</li><li>2회차: 같은 1쪽 왼쪽 네 줄만 두 번. 오른쪽은 읽지 않습니다.</li><li>3회차: 2쪽 왼쪽 네 줄만 두 번. 오른쪽은 읽지 않습니다.</li><li>4회차: 2쪽 오른쪽 네 줄만 한 번. 준비점도 오른쪽에 나옵니다.</li></ol>
+<p><strong>총4회이며 모두 첫머리 준비점2초 뒤 자동으로 글이 나옵니다.</strong> 준비점은 클릭하지 않습니다. 회차 사이 위치 점6개도 기존과 같이 봅니다. 읽기를 마치면 다음 클릭 또는 스페이스를 누릅니다. 약5분입니다.</p>
+<label>줄자로 잰 카메라–눈 거리 <input id="distance" type="number" min="20" max="100" step="0.5" placeholder="52"> cm</label>
+<label><input id="stable" type="checkbox"> 흔들리지 않는 받침을 사용합니다.</label><label><input id="height" type="checkbox"> 화면 높이가 편합니다.</label>
+<video id="camera" autoplay playsinline muted></video><p><button id="prepare" disabled>카메라·모델 준비</button> <button id="start" disabled>기준 측정 시작</button></p>
+<p id="message" role="status">기존과 같은 약 52cm에서 시작하고 실제 잰 값을 입력해 주세요. 점을 클릭하거나 마우스를 따라가지 않습니다. 자연스럽게 깜빡이고, 불편하면 Esc로 중단하세요.</p>
+<section id="downloads" hidden><h2>시험 기록 저장</h2><pre id="resultRows"></pre><pre id="regionCounts"></pre><p id="pageRows"></p><p id="gateStatus"></p><button id="previewGate" disabled>조건 확인 · 시험용</button><p class="small">이번은 진단 전용 시험이므로 이 버튼은 항상 비활성화합니다. 다른 페이지의 서명 가능 여부를 평가하는 시험이 아닙니다.</p><p>기존 기준과 중간 점 확인으로 갱신한 가로 경계를 같은 측정 자료로 비교합니다. 기존의 짧은 머무름 시험 기록도 남깁니다. 시험용 기준은 서명 판단에 사용하지 않습니다. 1쪽 반복이 아직 읽지 않은 2쪽을 채우는지, 2쪽 왼쪽 반복이 오른쪽을 채우는지 확인합니다. 중간 위치 확인은 별도 시험용 가로 경계에만 사용하며 모델·원래 기준·서명 판단에는 영향을 주지 않습니다. 아래 결과는 글 영역과 가로 이동의 관찰 기록이며 읽기 인증이나 서명 점수가 아닙니다. 위치 확인과 실제 기록을 함께 분석하겠습니다.</p>
+<label>수행 확인 <select id="performed"><option value="unspecified">선택하지 않음</option><option value="performed">안내대로 수행함</option><option value="difficulty">어려운 구간이 있었음</option></select></label>
+<label>글씨 읽기 편안함 <select id="readability"><option value="unspecified">선택하지 않음</option><option value="comfortable">편하게 읽힘</option><option value="too_small">너무 작음</option><option value="too_large">너무 큼</option><option value="other_difficulty">다른 불편함</option></select></label>
+<label>참고사항 <textarea id="notes" rows="3" placeholder="예: 글이 너무 짧음, 특정 회차 수행을 잘못함, 거리/높이, 점이 불편했음"></textarea></label>
+<p><button data-download="samples" disabled>samples.csv 저장</button><button data-download="events" disabled>events.csv 저장</button><button data-download="diagnostics" disabled>diagnostics.json 저장</button></p>
+<p>첫 시도의 세 파일을 함께 보내 주세요. 실패하거나 중단돼도 그 기록부터 확인합니다.</p></section>
+<p class="small">음성·고개 동작은 없습니다. 영상·눈 사진은 내보내지 않고 측정 수치와 눈 영상 특징 수치를 저장합니다. 기존 제품 화면과 GitHub에는 영향을 주지 않는 별도 시험입니다.</p></main>
+<section id="anchorRetry" hidden role="status"><h2>개인별 기준을 다시 확인해야 합니다.</h2><p id="anchorRetryText"></p><p>아직 글 읽기 시험을 시작하지 않았습니다. 원인을 확인하기 위해 같은 기준 점 6개를 한 번만 더 측정합니다.<br>자세·거리·창 크기를 유지하고 자연스럽게 점을 봐 주세요. 점을 클릭하거나 눈을 억지로 고정하지 않습니다.</p><p>9개 점으로 만든 모델과 통과 기준은 그대로 유지합니다. 첫 실패 기록도 함께 저장합니다.</p><button id="retryAnchors" type="button">기준 점 6개 다시 확인 · 약 18초</button><button id="saveAnchorFailure" type="button">재시도 없이 기록 저장</button><p>두 번째도 통과하지 않으면 자동으로 종료합니다. 그때 세 파일을 저장해 보내 주세요.</p></section>
+<section id="stage" hidden><i id="target"></i></section>
+<section id="waiting" hidden><h2>개인 기준을 계산합니다.</h2><p>잠시 편하게 정면을 봐 주세요.</p></section>
+<section id="instruction" hidden><p id="trialNumber"></p><h2 id="instructionText"></h2><p>글이 보이면 마우스는 보지 말고 안내한 글을 자연스럽게 읽으세요. 해당 행동을 마치면 화면 아래의 다음 버튼을 클릭하거나 스페이스를 한 번 누릅니다.</p><button id="beginTrial">안내를 확인했습니다 · 글 보기 (스페이스 가능)</button></section>
+<section id="board" hidden aria-label="두 글 동시 보기"><article><span id="slot-left" class="slot">왼쪽 글</span><span id="text-left" class="readingText"></span></article><article><span id="slot-right" class="slot">오른쪽 글</span><span id="text-right" class="readingText"></span></article></section>
+<button id="finishTrial" hidden type="button" aria-label="다 읽었어요 · 다음" title="다 읽었어요 · 다음 (스페이스 가능)">다음</button>
+<script type="module" src="main.mjs"></script></body></html>
