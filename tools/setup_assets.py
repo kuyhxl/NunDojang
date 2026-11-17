@@ -18,6 +18,9 @@ WEB = os.path.join(ROOT, "web")
 MEDIAPIPE_VER = "0.10.32"
 PDFJS_VER = "4.10.38"
 PDFLIB_VER = "1.17.1"
+TESSERACT_VER = "5.1.1"        # tesseract.js (본체·일꾼)
+TESSERACT_CORE_VER = "5.1.1"   # tesseract.js-core (wasm). lstm판만 받는다 (엔진 1 = LSTM 전용)
+TESSDATA_VER = "4.0.0"         # 인식 데이터
 
 ASSETS = [
     # (저장 경로, URL)
@@ -41,6 +44,24 @@ ASSETS = [
      f"https://cdn.jsdelivr.net/npm/pdf-lib@{PDFLIB_VER}/dist/pdf-lib.esm.min.js"),
 ]
 
+# 사진·스캔 PDF 글자 인식 (Apache-2.0). 받지 않으면 이미지 PDF를 열 때 안내만 뜨고 나머지는 그대로 동작한다.
+# 용량이 크다 (합계 약 29MB): core 2개 약 7.9MB + kor 7.0MB + eng 10.9MB.
+# --no-ocr 로 건너뛸 수 있다.
+OCR_ASSETS = [
+    ("vendor/tesseract/tesseract.esm.min.js",
+     f"https://cdn.jsdelivr.net/npm/tesseract.js@{TESSERACT_VER}/dist/tesseract.esm.min.js"),
+    ("vendor/tesseract/worker.min.js",
+     f"https://cdn.jsdelivr.net/npm/tesseract.js@{TESSERACT_VER}/dist/worker.min.js"),
+    ("vendor/tesseract/core/tesseract-core-lstm.wasm.js",
+     f"https://cdn.jsdelivr.net/npm/tesseract.js-core@{TESSERACT_CORE_VER}/tesseract-core-lstm.wasm.js"),
+    ("vendor/tesseract/core/tesseract-core-simd-lstm.wasm.js",
+     f"https://cdn.jsdelivr.net/npm/tesseract.js-core@{TESSERACT_CORE_VER}/tesseract-core-simd-lstm.wasm.js"),
+    ("vendor/tesseract/lang/kor.traineddata.gz",
+     f"https://tessdata.projectnaptha.com/{TESSDATA_VER}/kor.traineddata.gz"),
+    ("vendor/tesseract/lang/eng.traineddata.gz",
+     f"https://tessdata.projectnaptha.com/{TESSDATA_VER}/eng.traineddata.gz"),
+]
+
 # 한글 스탬프용 폰트 (OFL). 없으면 영문 스탬프로 대체되므로 실패해도 치명적이지 않음.
 FONT = ("vendor/fonts/NotoSansKR-Regular.ttf",
         "https://cdn.jsdelivr.net/gh/notofonts/noto-cjk@main/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf")
@@ -56,6 +77,7 @@ LICENSES = [
      f"https://raw.githubusercontent.com/Hopding/pdf-lib/v{PDFLIB_VER}/LICENSE.md"),
     ("vendor/fonts/LICENSE",
      "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE"),
+    ("vendor/tesseract/LICENSE", "https://www.apache.org/licenses/LICENSE-2.0.txt"),
 ]
 
 
@@ -89,12 +111,16 @@ def fetch(rel, url):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--no-ocr", action="store_true",
+                    help="글자 인식 자산(약 29MB)을 건너뛴다. 이미지 PDF는 열 수 없게 된다.")
     args = ap.parse_args()
 
     print(f"web 폴더: {WEB}")
     ok = True
-    optional = {FONT[0], *(rel for rel, _ in LICENSES)}
-    for rel, url in ASSETS + [FONT] + LICENSES:
+    ocr = [] if args.no_ocr else OCR_ASSETS
+    # 글자 인식 자산은 없어도 앱이 돌아간다 (이미지 PDF만 못 연다) — 실패해도 중단하지 않는다
+    optional = {FONT[0], *(rel for rel, _ in LICENSES), *(rel for rel, _ in OCR_ASSETS)}
+    for rel, url in ASSETS + [FONT] + ocr + LICENSES:
         if args.check:
             exists = os.path.exists(os.path.join(WEB, rel))
             print(f"  {'있음' if exists else '없음'}   {rel}")

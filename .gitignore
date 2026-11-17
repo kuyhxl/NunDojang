@@ -3,6 +3,7 @@ web/vendor/mediapipe/**
 web/vendor/pdfjs/**
 web/vendor/pdf-lib/**
 web/vendor/fonts/**
+web/vendor/tesseract/**
 web/models/face_landmarker.task
 !web/vendor/**/.gitkeep
 !web/models/.gitkeep

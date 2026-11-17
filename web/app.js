@@ -46,12 +46,17 @@ const xWindow = urlParams.has('xwindow');
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
 const scoreLines = urlParams.get('score') === 'lines';
-const config = reflowParam === 20 || reflowParam === 24 || scoreLines
-  ? Object.freeze({
-      ...DEFAULT_CONFIG,
-      ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
-      ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {})
-    })
+// ?ocr=0 → 사진·스캔 PDF를 글자 인식으로 여는 것을 끈다 (기본 켜짐). ?ocrlang=kor → 인식 언어 바꾸기.
+const ocrOff = urlParams.get('ocr') === '0';
+const ocrLangParam = urlParams.get('ocrlang');
+const configOverrides = {
+  ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
+  ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {}),
+  ...(ocrOff ? { ocrEnabled: false } : {}),
+  ...(ocrLangParam ? { ocrLangs: ocrLangParam } : {})
+};
+const config = Object.keys(configOverrides).length
+  ? Object.freeze({ ...DEFAULT_CONFIG, ...configOverrides })
   : DEFAULT_CONFIG;
 const urls = resolveAssetUrls(config);
 const MODE = (TRACKER_MOCK || DETECTOR_MOCK) ? 'mock' : 'real';
@@ -128,10 +133,12 @@ async function openPdfFile(file) {
   await closeDocument();
   try {
     if (pdf.mode === 'reflow') setMsg('viewerMsg', `텍스트를 뽑아 ${pdf.layout.fontPx}px로 다시 배치하는 중…`, '');
-    const { pageCount: n, sourcePageCount } = await pdf.open(file);
+    const { pageCount: n, sourcePageCount, ocr } = await pdf.open(file, { onProgress: showOpenProgress });
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
-    $('docName').textContent = pdf.mode === 'reflow' ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px` : `${n}쪽`;
+    $('docName').textContent = pdf.mode === 'reflow'
+      ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px${ocr ? ' · 글자 인식' : ''}`
+      : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
@@ -144,10 +151,18 @@ async function openPdfFile(file) {
     await goToPage(1);
     setMsg('viewerMsg', '', '');
     checkZoom();
+    // 인식한 글은 틀릴 수 있다. 숨기지 말고 문서를 여는 내내 띄워 둔다 (봉인은 원본 글자를 보증하지 않는다).
+    // 배율 안내보다 뒤에 둔다 — 둘 다 있으면 이쪽이 더 중요하다.
+    if (ocr) setMsg('viewerMsg', `텍스트가 없는 PDF라 글자를 인식해 읽었습니다 (${ocr.langs}, 확신도 ${Math.round(ocr.confidence)}%). 인식이 틀린 글자가 있을 수 있습니다.`, 'warn');
     setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
   }
+}
+/** 문서 여는 동안의 진행 표시. 글자 인식은 쪽당 몇 초씩 걸려 알려 주지 않으면 멈춘 것처럼 보인다. */
+function showOpenProgress(s) {
+  if (s.stage === 'ocr-load') setMsg('viewerMsg', '텍스트가 없는 PDF입니다. 글자 인식을 준비하는 중… (처음 한 번은 오래 걸립니다)', '');
+  else if (s.stage === 'ocr-page') setMsg('viewerMsg', `글자를 읽는 중… ${s.page}/${s.pageCount}쪽`, '');
 }
 for (const id of ['pdfInput', 'pdfInput2']) {
   $(id).addEventListener('change', async (e) => { await openPdfFile(e.target.files?.[0]); e.target.value = ''; });
@@ -827,7 +842,8 @@ function resetSeal() {
 // ---------- 내보내기 ----------
 function buildSessionJson() {
   return sessionJson({ snapshot: store.getSnapshot(), detectorConfig: DETECTOR_CONFIG, blinkConfig: BLINK_CONFIG,
-    cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE });
+    cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE,
+    ocr: pdf?.ocrInfo ?? null });
 }
 $('dlSamplesBtn').addEventListener('click', () => store && download('samples.csv', samplesCsv(store.getLogs().samples), 'text/csv'));
 $('dlEventsBtn').addEventListener('click', () => store && download('events.csv', eventsCsv(store.getLogs().events), 'text/csv'));

@@ -23,13 +23,15 @@ export function toCsv(rows, columns) {
 export function samplesCsv(samples) { return toCsv(samples, SAMPLE_COLUMNS); }
 export function eventsCsv(events) { return toCsv(events, EVENT_COLUMNS); }
 
-export function sessionJson({ snapshot, detectorConfig, blinkConfig, cameraDiagnostics, detectorDiagnostics, mode }) {
+export function sessionJson({ snapshot, detectorConfig, blinkConfig, cameraDiagnostics, detectorDiagnostics, mode, ocr = null }) {
   return JSON.stringify({
     exportedAt: new Date().toISOString(),
     appVersion: APP_VERSION,
     runtime: 'web',
     origin: location.origin,
     mode, // 'real' | 'mock' | 'fixture'
+    // 글자 인식으로 연 문서면 {langs, confidence, scale, version}. 읽은 글이 원본 글자와 다를 수 있다는 표시다.
+    ocr,
     contractVersion: snapshot.contractVersion,
     detectorVersion: detectorConfig.detectorVersion,
     scorePolicyVersion: snapshot.configSnapshot.scorePolicyVersion,

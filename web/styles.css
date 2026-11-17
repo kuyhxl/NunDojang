@@ -232,6 +232,8 @@ body:not(.is-empty) .drop-zone { display: none; }
 .pane-msg { margin: 12px 0 0; font-size: 13px; color: rgba(255,255,255,.8); }
 .pane-msg:empty { display: none; }
 .pane-msg.bad { color: #fff; text-decoration: underline rgba(255,255,255,.5); }
+/* 글자 인식으로 연 문서: 글이 틀릴 수 있다는 경고를 문서를 여는 내내 띄운다 */
+.pane-msg.warn { color: #ffd98a; }
 
 /* 페이지 카드: 직각, 흰색 */
 .page-frame { position: relative; margin-top: 32px; max-width: 908px; background: #fff; border-radius: 0; overflow: hidden; min-height: 720px; box-shadow: 0 -1px 0 rgba(255,255,255,.35), 0 30px 60px rgba(0,0,0,.25); }
