@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic','Helvetica Neue',sans-serif"><rect width="1920" height="1080" fill="#ffffff"/><text x="80" y="104" font-size="54" font-weight="800" fill="#0f172a">문제</text>
+<text x="80" y="152" font-size="27" fill="#64748b">체크박스는 읽었다는 증거가 아닙니다</text>
+<rect x="80" y="240" width="820" height="300" rx="22" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"/>
+<rect x="150" y="340" width="58" height="58" rx="10" fill="#fff" stroke="#64748b" stroke-width="4"/>
+<path d="M163 369 l16 18 l31 -36" fill="none" stroke="#64748b" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="236" y="388" font-size="40" font-weight="700" fill="#64748b">위 내용을 모두 읽었습니다</text>
+<text x="490" y="482" font-size="36" font-weight="800" fill="#b91c1c" text-anchor="middle">아무것도 증명하지 않습니다</text>
+<rect x="100" y="580" width="370" height="68" rx="34" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="285" y="625" font-size="28" fill="#64748b" text-anchor="middle">의료 동의서</text>
+<rect x="500" y="580" width="370" height="68" rx="34" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="685" y="625" font-size="28" fill="#64748b" text-anchor="middle">약관</text>
+<rect x="100" y="666" width="370" height="68" rx="34" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="285" y="711" font-size="28" fill="#64748b" text-anchor="middle">보험</text>
+<rect x="500" y="666" width="370" height="68" rx="34" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="685" y="711" font-size="28" fill="#64748b" text-anchor="middle">근로계약서</text>
+<rect x="960" y="240" width="880" height="508" rx="22" fill="#fef2f2" stroke="#fecaca" stroke-width="3"/>
+<text x="1400" y="300" font-size="26" fill="#64748b" text-anchor="middle">온라인 동의서 1,209명을 추적한 연구</text>
+<text x="1010" y="372" font-size="30" fill="#64748b">동의서 분량</text>
+<text x="1790" y="372" font-size="44" font-weight="800" fill="#0f172a" text-anchor="end">2,833단어</text>
+<text x="1010" y="448" font-size="30" fill="#64748b">다 읽으려면</text>
+<text x="1790" y="448" font-size="44" font-weight="800" fill="#0f172a" text-anchor="end">9분 30초</text>
+<text x="1010" y="524" font-size="30" fill="#64748b">실제 동의까지</text>
+<text x="1790" y="524" font-size="44" font-weight="800" fill="#b91c1c" text-anchor="end">53초</text>
+<line x1="1010" y1="628" x2="1790" y2="628" stroke="#fecaca" stroke-width="2"/>
+<text x="1400" y="676" font-size="28" fill="#0f172a" text-anchor="middle">문서 끝에 숨겨 둔 링크를 찾은 사람</text>
+<text x="1400" y="730" font-size="52" font-weight="800" fill="#b91c1c" text-anchor="middle">2.5%</text>
+<text x="960" y="796" font-size="22" fill="#64748b">Desch 외 (2011), Annals of Internal Medicine 155(5):316–322</text>
+<rect x="80" y="860" width="1760" height="110" rx="18" fill="#0f172a"/>
+<text x="960.0" y="906" font-size="36" fill="#e2e8f0" text-anchor="middle">읽었는지 알아내려고 <tspan font-weight="800" fill="#fff">문서에 함정을 파야 했습니다.</tspan></text>
+<text x="960.0" y="950" font-size="32" font-weight="800" fill="#7dd3fc" text-anchor="middle">저희는 그걸 직접 재기로 했습니다.</text></svg>

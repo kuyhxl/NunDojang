@@ -71,7 +71,7 @@ fy = CY + CH + 62
 o.append(f'<rect x="80" y="{fy}" width="{W-160}" height="130" rx="18" fill="{PAPER}" stroke="{LINE}"/>')
 o.append(f'<text x="118" y="{fy+54}" font-size="30" fill="{INK}"><tspan font-weight="800" fill="{ACC[2]}">증명하는 것 </tspan>각 줄을 따라 읽는 눈 움직임이, 그 줄을 읽을 만한 시간 동안 관찰되었다.</text>')
 o.append(f'<text x="118" y="{fy+102}" font-size="30" fill="{INK}"><tspan font-weight="800" fill="#b91c1c">증명하지 않는 것 </tspan>이해. 그건 1000Hz 장비로도 글만 보고 맞히는 예측을 넘지 못한다.</text>')
-save(o, 'slide1_flow')
+save(o, 's06_flow')
 
 # ─────────────────────────── 2장: 보정 27점이 각각 하는 일
 o = []
@@ -126,7 +126,7 @@ for i, (title, sub, l1, l2, take) in enumerate(items):
 fy = CY + CH + 56
 o.append(f'<rect x="80" y="{fy}" width="{W-160}" height="78" rx="18" fill="{PAPER}" stroke="{LINE}"/>')
 o.append(f'<text x="118" y="{fy+50}" font-size="29" fill="{INK}">첫 번째가 없으면 <tspan font-weight="800">측정이 아예 안 되고</tspan>, 나머지 셋이 없으면 <tspan font-weight="800">읽었는데 떨어지는 일</tspan>이 생긴다.</text>')
-save(o, 'slide2_calibration')
+save(o, 's13_calibration')
 
 # ─────────────────────────── 3장: 한 줄을 '읽음'으로 보는 조건
 o = []
@@ -170,4 +170,4 @@ o.append(f'<text x="{RX+34}" y="{cy+50}" font-size="29" font-weight="800" fill="
 fy = 846
 o.append(f'<rect x="80" y="{fy}" width="{W-160}" height="78" rx="18" fill="{PAPER}" stroke="{LINE}"/>')
 o.append(f'<text x="118" y="{fy+50}" font-size="29" fill="{INK}">쪽 점수 = <tspan font-weight="800">읽은 줄 ÷ 전체 줄 × 100</tspan>   ·   80점 이상이면 그 쪽 통과   ·   모든 쪽을 통과해야 봉인된다</text>')
-save(o, 'slide3_linecheck')
+save(o, 's07_linecheck')

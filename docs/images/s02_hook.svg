@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic','Helvetica Neue',sans-serif"><rect width="1920" height="1080" fill="#ffffff"/><image href="hook_notice.png" x="80" y="40" height="1000" preserveAspectRatio="xMidYMid meet"/>
+<text x="840" y="330" font-size="52" font-weight="800" fill="#0f172a">2021년,</text>
+<text x="840" y="402" font-size="52" font-weight="800" fill="#0f172a">이 안내문 받으셨을 겁니다.</text>
+<line x1="840" y1="470" x2="1540" y2="470" stroke="#cbd5e1" stroke-width="2"/>
+<text x="840" y="572" font-size="60" font-weight="800" fill="#b91c1c">혹시 내용이</text>
+<text x="840" y="650" font-size="60" font-weight="800" fill="#b91c1c">기억나시나요?</text>
+<text x="840" y="760" font-size="26" fill="#64748b">질병관리청 · 교육부 · 코로나19 예방접종 안내문(학생용)</text></svg>
