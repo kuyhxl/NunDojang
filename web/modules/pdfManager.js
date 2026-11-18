@@ -17,7 +17,8 @@ export async function createPdfManager({ canvasElement, config }) {
   let doc = null;
   let reflowed = null;     // {pages: [[{kind,text}]], sourcePages}
   let renderSeq = 0;
-  let ocrInfo = null;      // 글자 인식으로 연 문서면 {langs, confidence, scale, version}
+  let ocrInfo = null;      // 글자 인식으로 연 문서면 {langs, confidence, scale, version}. 일부 쪽만 인식했으면 sourcePages에 그 원본 쪽 번호
+  let unreadSourcePages = [];   // 스캔 쪽인데 글을 보여 주지 못한 원본 쪽 번호 (인식을 껐거나, 자산이 없거나, 못 알아봄)
 
   try {
     pdfjs = await import(urls.pdfjsModuleUrl);
@@ -46,7 +47,46 @@ export async function createPdfManager({ canvasElement, config }) {
     onProgress?.({ stage: 'reflow' });
     reflowed = await reflowDocument(doc, createMeasure(layout), layout, { OPS: pdfjs.OPS });
     if (reflowed.pages.length === 0) await openByOcr(onProgress);
-    return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode, ocr: ocrInfo };
+    else if (reflowed.scanPages.length) await fillScanPages(onProgress);
+    return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode, ocr: ocrInfo, unreadSourcePages: [...unreadSourcePages] };
+  }
+
+  /**
+   * 텍스트 쪽과 스캔 쪽이 섞인 문서: 스캔 쪽만 글자를 읽어 제자리에 끼운다.
+   * 왜: 예전에는 문서 전체에 글이 한 줄도 없을 때만 인식했다. 섞인 문서는 스캔 쪽이 아무 표시 없이 빠져,
+   *     보여 주지도 않은 쪽까지 "모든 페이지 기준 충족"으로 봉인됐다.
+   * 인식을 못 해도 문서는 연다 — 대신 그 쪽 번호를 unreadSourcePages에 남기고, 부른 쪽이 반드시 사용자에게 알린다.
+   */
+  async function fillScanPages(onProgress) {
+    const scan = reflowed.scanPages;
+    unreadSourcePages = [...scan];
+    if (config.ocrEnabled === false) return;
+    let engine = null;
+    try {
+      onProgress?.({ stage: 'ocr-load' });
+      engine = await createOcrEngine({
+        moduleUrl: urls.tesseractModuleUrl, workerUrl: urls.tesseractWorkerUrl,
+        coreUrl: urls.tesseractCoreUrl, langUrl: urls.tesseractLangUrl,
+        langs: config.ocrLangs ?? OCR.langs
+      });
+      const r = await ocrDocument(doc, {
+        engine, pages: scan,
+        onProgress: (p) => onProgress?.({ stage: 'ocr-page', ...p })
+      });
+      const used = r.byPage.filter((p) => p.paragraphs.length > 0 && p.confidence >= OCR.minPageConfidence);
+      if (!used.length) return;
+      const pageParagraphs = reflowed.pageParagraphs.slice();
+      for (const p of used) pageParagraphs[p.page - 1] = p.paragraphs;   // 그 쪽의 (비어 있던) 문단을 인식한 글로
+      const paragraphs = pageParagraphs.flat();
+      reflowed = { ...reflowed, pageParagraphs, paragraphs, pages: layoutParagraphs(paragraphs, createMeasure(layout), layout) };
+      unreadSourcePages = scan.filter((n) => !used.some((p) => p.page === n));
+      ocrInfo = { langs: engine.langs, confidence: used.reduce((s, p) => s + p.confidence, 0) / used.length,
+        scale: r.scale, version: OCR.version, sourcePages: used.map((p) => p.page) };
+    } catch (e) {
+      console.warn('스캔 쪽 글자 인식 실패 — 그 쪽은 표시하지 못한 쪽으로 남긴다', e);
+    } finally {
+      await engine?.terminate();
+    }
   }
 
   /**
@@ -152,14 +192,15 @@ export async function createPdfManager({ canvasElement, config }) {
 
   /** 재배치 결과 전체 (계약 밖). 정답 파일·시험용. */
   function getReflow() {
-    return reflowed ? { version: layout.version, layout: { ...layout }, sourcePages: reflowed.sourcePages, pages: reflowed.pages, ocr: ocrInfo } : null;
+    return reflowed ? { version: layout.version, layout: { ...layout }, sourcePages: reflowed.sourcePages, pages: reflowed.pages, ocr: ocrInfo, unreadSourcePages: [...unreadSourcePages] } : null;
   }
 
   async function close() {
     renderSeq++;
     if (doc) { try { await doc.destroy(); } catch (_) { /* ignore */ } }
-    doc = null; reflowed = null; ocrInfo = null;
+    doc = null; reflowed = null; ocrInfo = null; unreadSourcePages = [];
   }
 
-  return { open, renderPage, getPageText, getReflow, close, mode, layout, get ocrInfo() { return ocrInfo; } };
+  return { open, renderPage, getPageText, getReflow, close, mode, layout, get ocrInfo() { return ocrInfo; },
+    get unreadSourcePages() { return [...unreadSourcePages]; } };
 }

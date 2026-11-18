@@ -122,7 +122,10 @@ export async function createGazeTracker({
   let neutralCollector = createNeutralCollector(cfg.neutralSamples);
 
   let destroyed = false, running = false, starting = null, generation = 0, raf = null, stream = null;
-  let t0 = 0, seq = 0, modelClock = -1, lastMediaTime = null;
+  // t0·seq는 추적기 수명 동안 한 번만 정한다. 껐다 켜도 0으로 돌리지 않는다 (A의 Sample.tMs와 같은 규칙, docs/interface.md).
+  // 왜: 0으로 돌아가면 같은 쪽에 남아 있던 줄 추적기(lineProgress·gazeSweep)가 옛 시각을 들고 있어
+  //     "경과 시간"이 음수가 되고, 줄바꿈 쉬는 시간이 끝나지 않아 그 쪽에서 더는 아무 줄도 넘어가지 않았다.
+  let t0 = null, seq = 0, modelClock = -1, lastMediaTime = null;
   let frames = 0, invalidFrames = 0, fpsTimes = [];
   const opennessBaseline = createOpennessBaseline();
   const blinkGuard = createBlinkGuard({
@@ -356,14 +359,14 @@ export async function createGazeTracker({
     if (starting) return starting;
     const g = ++generation;
     resetSignals();
-    seq = 0; frames = 0; invalidFrames = 0;
+    frames = 0; invalidFrames = 0;
     starting = (async () => {
       try {
         if (typeof videoElement.requestVideoFrameCallback !== 'function') {
           throw new Error('새 영상 프레임 알림(requestVideoFrameCallback)이 필요합니다. 최신 Chrome에서 실행하세요.');
         }
         if (!cfg.shareVideo) await openCamera(g);
-        t0 = performance.now();
+        t0 ??= performance.now();
         modelClock = performance.now();
         running = true;
         emitStatus();

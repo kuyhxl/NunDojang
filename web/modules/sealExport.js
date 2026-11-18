@@ -56,6 +56,49 @@ const fmtIssued = (iso) => {
   return m ? `${m[1]}년 ${Number(m[2])}월 ${Number(m[3])}일 ${m[4]}:${m[5]}:${m[6]} (UTC${m[7]})` : iso;
 };
 
+// 점수 표가 쓸 수 있는 높이. 이보다 길면 서명란과 아래 고지문을 덮는다.
+const TABLE_MAX_H = 290;             // pt
+const TABLE_MIN_ROW_H = 7;           // pt. 이보다 낮으면 글자를 읽을 수 없다
+const TABLE_MAX_ROWS = Math.floor(TABLE_MAX_H / TABLE_MIN_ROW_H) - 1;   // 머리줄을 뺀 한 단의 최대 줄 수 (40)
+const TABLE_MAX_COLS = 8;            // 쪽마다 한 줄씩 적을 때의 최대 단 수 → 320쪽까지
+const TABLE_GROUP_COLS = 6;          // 묶어 적을 때의 단 수 ("1201–1205"처럼 쪽 표시가 길어 단을 넓힌다)
+
+/**
+ * 점수 표의 배치. 쪽 수가 몇이든 표 높이가 TABLE_MAX_H를 넘지 않게 한다 (DOM을 쓰지 않아 node에서 시험할 수 있다).
+ *  - 160쪽까지: 예전과 같다 (최대 4단)
+ *  - 320쪽까지: 단을 8단까지 늘린다
+ *  - 그 위: 여러 쪽을 한 줄로 묶어 그 묶음의 **가장 낮은 점수**를 적는다. 쪽별 점수는 첨부한 seal-<id>.json에 그대로 있다
+ * 왜: 예전에는 줄 높이를 7pt 밑으로 못 줄이면서 단은 4단에 묶여 있어, 약 168쪽을 넘으면 표가 서명란을 덮고
+ *     320쪽쯤에서는 서명란이 쪽 밖으로 밀려 나갔다. 재배치는 쪽당 12줄이라 긴 문서는 쉽게 그 쪽 수가 된다.
+ * @param {Array<{pageId:number, displayScore:number|null, passed:boolean}>} pages
+ * @returns {{rows:Array<{label:string, score:number|null, passed:boolean, verdict:string}>, cols:number, rowsPerCol:number, rowH:number, heightPt:number, groupSize:number}}
+ */
+export function stampTableLayout(pages) {
+  const n = pages.length;
+  let rows, cols, groupSize = 1;
+  if (n <= TABLE_MAX_COLS * TABLE_MAX_ROWS) {
+    rows = pages.map((p) => ({ label: String(p.pageId), score: p.displayScore, passed: p.passed, verdict: p.passed ? '통과' : '미달' }));
+    cols = n <= 4 * TABLE_MAX_ROWS ? Math.max(1, Math.min(4, Math.ceil(n / 16))) : Math.ceil(n / TABLE_MAX_ROWS);
+  } else {
+    cols = TABLE_GROUP_COLS;
+    groupSize = Math.ceil(n / (cols * TABLE_MAX_ROWS));
+    rows = [];
+    for (let i = 0; i < n; i += groupSize) {
+      const g = pages.slice(i, i + groupSize);
+      const scores = g.map((p) => p.displayScore).filter(Number.isFinite);
+      const failed = g.filter((p) => !p.passed).length;
+      rows.push({
+        label: g.length > 1 ? `${g[0].pageId}–${g[g.length - 1].pageId}` : String(g[0].pageId),
+        score: scores.length ? Math.min(...scores) : null,
+        passed: failed === 0, verdict: failed ? `미달 ${failed}` : '통과'
+      });
+    }
+  }
+  const rowsPerCol = Math.ceil(rows.length / cols);
+  const rowH = Math.max(TABLE_MIN_ROW_H, Math.min(17, TABLE_MAX_H / (rowsPerCol + 1)));
+  return { rows, cols, rowsPerCol, rowH, heightPt: rowH * (rowsPerCol + 1), groupSize };
+}
+
 /** 긴 글을 폭에 맞춰 줄 나눔 (한글은 글자 단위) */
 function wrapText(ctx, text, maxW) {
   const out = []; let line = '';
@@ -140,12 +183,11 @@ export async function renderStampPng({ payload, docName, signaturePng, fontUrl }
   // 페이지별 점수 표
   y += 10; ctx.fillStyle = INK; ctx.font = font(12); ctx.fillText('페이지별 점수', M, y);
   y += 12;
-  const n = payload.pages.length;
-  const maxRowsPerCol = 16;
-  const cols = Math.max(1, Math.min(4, Math.ceil(n / maxRowsPerCol)));
-  const rowsPerCol = Math.ceil(n / cols);
-  const gap = 14, colW = (W - 2 * M - gap * (cols - 1)) / cols;
-  const rowH = Math.max(7, Math.min(17, 290 / (rowsPerCol + 1)));   // 64쪽이 넘으면 줄 높이를 줄여 서명란을 덮지 않게
+  // 배치는 stampTableLayout이 정한다 — 쪽 수가 몇이든 표가 서명란을 덮지 않는다
+  const table = stampTableLayout(payload.pages);
+  const { rows: tableRows, cols, rowsPerCol, rowH } = table;
+  const gap = cols > 4 ? 8 : 14, colW = (W - 2 * M - gap * (cols - 1)) / cols;
+  const pad = cols > 4 ? 4 : 8;      // 단이 좁으면 안쪽 여백도 줄인다
   const fs = Math.min(10, rowH * 0.6), ty0 = rowH * 0.7;
   const tableTop = y;
   for (let c = 0; c < cols; c++) {
@@ -153,22 +195,26 @@ export async function renderStampPng({ payload, docName, signaturePng, fontUrl }
     let ty = tableTop;
     ctx.fillStyle = '#f3f4f6'; ctx.fillRect(x0, ty, colW, rowH);
     ctx.fillStyle = MUTED; ctx.font = font(Math.min(9, fs));
-    ctx.fillText('쪽', x0 + 8, ty + ty0); ctx.textAlign = 'right';
-    ctx.fillText('점수', x0 + colW * 0.62, ty + ty0); ctx.fillText('판정', x0 + colW - 8, ty + ty0); ctx.textAlign = 'left';
+    ctx.fillText('쪽', x0 + pad, ty + ty0); ctx.textAlign = 'right';
+    ctx.fillText(table.groupSize > 1 ? '최저' : '점수', x0 + colW * 0.62, ty + ty0); ctx.fillText('판정', x0 + colW - pad, ty + ty0); ctx.textAlign = 'left';
     ty += rowH;
-    for (let i = c * rowsPerCol; i < Math.min(n, (c + 1) * rowsPerCol); i++) {
-      const p = payload.pages[i];
+    for (let i = c * rowsPerCol; i < Math.min(tableRows.length, (c + 1) * rowsPerCol); i++) {
+      const r = tableRows[i];
       ctx.strokeStyle = LINE; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(x0, ty + rowH); ctx.lineTo(x0 + colW, ty + rowH); ctx.stroke();
       ctx.fillStyle = INK; ctx.font = font(fs);
-      ctx.fillText(String(p.pageId), x0 + 8, ty + ty0);
+      ctx.fillText(r.label, x0 + pad, ty + ty0);
       ctx.textAlign = 'right';
-      ctx.fillText(Number.isFinite(p.displayScore) ? `${Math.round(p.displayScore)}점` : '—', x0 + colW * 0.62, ty + ty0);
-      ctx.fillStyle = p.passed ? GOOD : BAD; ctx.fillText(p.passed ? '통과' : '미달', x0 + colW - 8, ty + ty0);
+      ctx.fillText(Number.isFinite(r.score) ? `${Math.round(r.score)}점` : '—', x0 + colW * 0.62, ty + ty0);
+      ctx.fillStyle = r.passed ? GOOD : BAD; ctx.fillText(r.verdict, x0 + colW - pad, ty + ty0);
       ctx.textAlign = 'left';
       ty += rowH;
     }
   }
-  y = tableTop + rowH * (rowsPerCol + 1) + 26;
+  if (table.groupSize > 1) {
+    ctx.fillStyle = MUTED; ctx.font = font(7.5);
+    ctx.fillText(`쪽 수가 많아 ${table.groupSize}쪽씩 묶어 가장 낮은 점수를 적었습니다. 쪽별 점수는 첨부 파일 seal-${payload.sealId}.json에 있습니다.`, M, tableTop + table.heightPt + 11);
+  }
+  y = tableTop + table.heightPt + 26;
 
   // 서명
   ctx.fillStyle = INK; ctx.font = font(12); ctx.fillText('서명', M, y);
