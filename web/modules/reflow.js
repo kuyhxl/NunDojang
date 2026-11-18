@@ -242,9 +242,10 @@ const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0
 /**
  * 쪽 안의 래스터 그림 위치. PDF.js 그리기 명령을 따라가며 좌표 변환(CTM)을 계산해 그림의 단위 사각형을 쪽 좌표로 옮긴다.
  * 너무 작은 것(아이콘·글머리표)과 쪽 대부분을 덮는 것(배경·스캔)은 뺀다.
+ * @param {{fullPage?: boolean}|null} [info] 주면, 쪽 대부분을 덮어서 뺀 그림이 있었는지를 `info.fullPage`에 적는다 (스캔 쪽 판별용)
  * @returns [{x0, x1, top, bottom}] 위에서부터 잰 pt
  */
-export async function findImages(page, OPS, pageW, pageH) {
+export async function findImages(page, OPS, pageW, pageH, info = null) {
   if (!OPS) return [];
   const { fnArray, argsArray } = await page.getOperatorList();
   const paint = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject, OPS.paintImageMaskXObject].filter((v) => v !== undefined));
@@ -262,7 +263,7 @@ export async function findImages(page, OPS, pageW, pageH) {
       const b = { x0: Math.min(...xs), x1: Math.max(...xs), top: pageH - Math.max(...ys), bottom: pageH - Math.min(...ys) };
       const w = b.x1 - b.x0, h = b.bottom - b.top;
       if (w < 24 || h < 24) continue;                              // 아이콘·글머리표
-      if (w * h > pageW * pageH * 0.6) continue;                    // 배경·스캔 쪽
+      if (w * h > pageW * pageH * 0.6) { if (info) info.fullPage = true; continue; }   // 배경·스캔 쪽
       boxes.push(b);
     }
   }
@@ -307,27 +308,36 @@ function insertFigures(paras, imgs, sourcePage, pageW) {
  * @param pdfDoc PDF.js 문서
  * @param measure (text) → 13px 글꼴에서의 폭(px)
  * @param env.OPS PDF.js의 OPS 표 (그림 위치를 찾을 때 필요. 없으면 그림을 찾지 않는다)
- * @returns {pages: [[{kind,text} | {kind:'figure',slots,sourcePage}]], sourcePages, paragraphs}
+ * @returns {pages: [[{kind,text} | {kind:'figure',slots,sourcePage}]], sourcePages, paragraphs, pageParagraphs, scanPages}
+ *   pageParagraphs: 원본 쪽마다의 문단 (쪽 하나만 갈아 끼울 때 쓴다).
+ *   scanPages: 글은 한 줄도 없는데 그림이 쪽 대부분을 덮는 원본 쪽 번호 — 스캔한 쪽이다.
+ *     그대로 두면 그 쪽의 글이 **아무 표시 없이 빠진다**. 부른 쪽에서 글자 인식을 돌리거나 사용자에게 알려야 한다.
  */
 export async function reflowDocument(pdfDoc, measure, opts = REFLOW, { OPS } = {}) {
   // 이미 재배치해 둔 PDF(demo/13px)를 다시 열면 줄을 그대로 쓴다 — 다시 이으면 줄 나눔이 바뀐다
   const meta = await pdfDoc.getMetadata().catch(() => null);
   const already = /nundojang/.test(meta?.info?.Keywords ?? '') && /reflow/.test(meta?.info?.Keywords ?? '');
-  const paragraphs = [];
+  const pageParagraphs = [], scanPages = [];
   for (let n = 1; n <= pdfDoc.numPages; n++) {
     const page = await pdfDoc.getPage(n);
     const vp = page.getViewport({ scale: 1 });
     const tc = await page.getTextContent();
     let lines = itemsToLines(tc.items, vp.height);
     if (already) {   // 그림 자리 안내문은 다시 그림 자리로
-      paragraphs.push(...lines.map((l) => { const m = /^그림 — 원본 (\d+)쪽\./.exec(l.t); return m ? { kind: 'figure', text: '', sourcePage: +m[1] } : { kind: 'p', text: l.t }; }));
+      pageParagraphs.push(lines.map((l) => { const m = /^그림 — 원본 (\d+)쪽\./.exec(l.t); return m ? { kind: 'figure', text: '', sourcePage: +m[1] } : { kind: 'p', text: l.t }; }));
       continue;
     }
-    const imgs = await findImages(page, OPS, vp.width, vp.height).catch(() => []);
+    const info = { fullPage: false };
+    const imgs = await findImages(page, OPS, vp.width, vp.height, info).catch(() => []);
     if (imgs.length) lines = lines.filter((l) => !insideAny(l, imgs));
-    paragraphs.push(...insertFigures(linesToParagraphs(lines, vp.width), imgs, n, vp.width));
+    const paras = insertFigures(linesToParagraphs(lines, vp.width), imgs, n, vp.width);
+    // 스캔 쪽: 글이 없고, 그림 하나(또는 타일로 나뉜 그림을 합친 것)가 쪽의 60%를 넘게 덮는다
+    const covered = info.fullPage || imgs.some((b) => (b.x1 - b.x0) * (b.bottom - b.top) > vp.width * vp.height * 0.6);
+    if (covered && !paras.some((p) => p.kind !== 'figure')) scanPages.push(n);
+    pageParagraphs.push(paras);
   }
-  return { pages: layoutParagraphs(paragraphs, measure, opts), sourcePages: pdfDoc.numPages, paragraphs };
+  const paragraphs = pageParagraphs.flat();
+  return { pages: layoutParagraphs(paragraphs, measure, opts), sourcePages: pdfDoc.numPages, paragraphs, pageParagraphs, scanPages };
 }
 
 // ---------------------------------------------------------------- 5) 그리기 (브라우저 전용)

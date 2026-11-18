@@ -40,10 +40,31 @@ web/vendor/fonts/LICENSE         SIL OFL 1.1
 
 ## 쓰지 않는 것 — GPL 계열
 
-**WebEyeTrack (GPL-3.0)은 제품에 넣지 않는다.** 2026-11-17 팀 결정.
+**GPL 계열 구성요소는 제품에 넣지 않는다.** 2026-11-17 팀 결정.
+GPL은 전염성이라, 묶어서 배포하면 눈도장 전체를 같은 조건으로 공개해야 한다.
+브라우저에서 도는 코드는 사용자에게 **전송**되므로, 서버에만 두면 피해 가는 길도 없다.
 
-GPL-3.0은 전염성이라, 묶어서 배포하면 눈도장 전체를 GPL-3.0으로 공개해야 한다.
-A(민서)의 측정 시제품(PR #14)이 WebEyeTrack을 쓰므로, 그 시제품은 이 저장소 밖에서
-연구·비교용으로만 둔다. 시제품의 **방법**을 읽고 우리가 다시 구현하는 것은 제한받지 않으며,
-실제로 그렇게 반영한 항목은 `docs/decisions.md`와 해당 모듈 주석에 출처를 적는다.
-그 과정에서 GPL 코드를 그대로 옮겨 적지 않는다.
+지금 쓰는 구성요소 중 GPL 계열은 **없다.**
+
+### 정정 (2026-11-18)
+
+이 자리에 **"WebEyeTrack (GPL-3.0)은 제품에 넣지 않는다"**고 적혀 있었다. **틀렸다 — WebEyeTrack은 MIT다.**
+
+| 확인한 것 | 결과 |
+|---|---|
+| 상류 저장소 현재 `main` | MIT |
+| A가 고정한 커밋 `75fbd2f`의 `LICENSE` | MIT 원문 |
+| A가 보관한 사본 `review/LICENSE-WebEyeTrack-MIT.txt` | 같은 원문 |
+| 번들 worker 법적 고지 (`pilot-worker.js.LEGAL.txt`) | Apache-2.0 1078건(전부 TensorFlow.js), GPL 0건 |
+
+`SPDX-License-Identifier: GPL-3.0-or-later`는 A가 직접 쓴 `core/math.mjs`·`core/viewport.mjs`
+두 파일에만 붙어 있고, 그것은 **눈도장 자체를 GPL로 본** 표기다. C가 그걸 WebEyeTrack 것으로
+잘못 읽었다. 근거와 경위는 `docs/comprehension_evidence.md` 18절.
+
+**따라서 WebEyeTrack은 고지만 함께 주면 쓸 수 있다.** 다만 BlazeGaze **가중치와 학습 데이터**의
+조건은 아직 확인하지 않았다 — 코드가 MIT여도 가중치는 별개일 수 있다. 제품에 넣기 전에 본다.
+
+## 우리 프로젝트의 라이선스 — 아직 없다
+
+이 저장소에 `LICENSE` 파일이 없다. 라이선스가 없으면 기본값은 "저작권 보유, 아무도 못 씀"이다.
+A가 자기 파일에 GPL-3.0-or-later를 적은 것을 보면 팀 안에서 공유된 적이 없다. **정할 문제다.**

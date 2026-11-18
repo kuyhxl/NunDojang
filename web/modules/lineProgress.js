@@ -119,6 +119,8 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
 
   return {
     push,
+    /** 글 왼쪽 끝이 옮겨졌을 때(창 크기·가로 스크롤) 줄바꿈 착지권을 새 자리로. 읽음·줄 번호는 그대로 둔다 */
+    setTextLeft: (px) => locker.setTextLeft(px),
     get line() { return locker.line; },
     get speed() { return locker.speed; },
     get readLines() { return [...read].sort((a, b) => a - b); },

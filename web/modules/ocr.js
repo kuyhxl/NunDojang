@@ -186,17 +186,22 @@ export async function createOcrEngine({ moduleUrl, workerUrl, coreUrl, langUrl, 
 /**
  * PDF 쪽들을 그림으로 그려 글자를 읽고, reflow.js가 받을 문단 목록을 만든다.
  * @param pdfDoc PDF.js 문서
- * @param {{engine, opts, onProgress, signal}} env onProgress({page, pageCount, ratio})
- * @returns {Promise<{paragraphs:Array, pageConfidences:number[], scale:number}>}
+ * @param {{engine, opts, onProgress, signal, pages}} env onProgress({page, pageCount, ratio})
+ *   pages: 인식할 원본 쪽 번호들. 안 주면 문서 전체. 텍스트 쪽과 스캔 쪽이 섞인 문서에서 스캔 쪽만 읽을 때 준다.
+ *   그때 onProgress의 page·pageCount는 "고른 쪽 중 몇 번째"이고, 원본 쪽 번호는 sourcePage로 간다.
+ * @returns {Promise<{paragraphs:Array, pageConfidences:number[], scale:number, byPage:Array<{page:number, paragraphs:Array, confidence:number}>}>}
  */
-export async function ocrDocument(pdfDoc, { engine, opts = OCR, onProgress, signal } = {}) {
+export async function ocrDocument(pdfDoc, { engine, opts = OCR, onProgress, signal, pages = null } = {}) {
   const paragraphs = [];
   const pageConfidences = [];
+  const byPage = [];
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: false });
   let scale = opts.minScale;
+  const list = Array.isArray(pages) ? pages : Array.from({ length: pdfDoc.numPages }, (_, i) => i + 1);
 
-  for (let n = 1; n <= pdfDoc.numPages; n++) {
+  for (let i = 0; i < list.length; i++) {
+    const n = list[i];
     if (signal?.aborted) throw Object.assign(new Error('글자 인식을 멈췄습니다.'), { code: 'ocr_aborted' });
     const page = await pdfDoc.getPage(n);
     const base = page.getViewport({ scale: 1 });
@@ -206,14 +211,17 @@ export async function ocrDocument(pdfDoc, { engine, opts = OCR, onProgress, sign
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);   // 투명 배경이 검게 인식되지 않게
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
-    onProgress?.({ page: n, pageCount: pdfDoc.numPages, ratio: 0 });
+    onProgress?.({ page: i + 1, pageCount: list.length, sourcePage: n, ratio: 0 });
     const data = await engine.recognize(canvas);
     const lineWords = collectLines(data);
-    pageConfidences.push(pageConfidence(lineWords));
+    const confidence = pageConfidence(lineWords);
+    pageConfidences.push(confidence);
     const lines = wordsToLines(lineWords, { scale, minConfidence: opts.minConfidence });
-    paragraphs.push(...linesToParagraphs(lines, base.width));
-    onProgress?.({ page: n, pageCount: pdfDoc.numPages, ratio: 1 });
+    const paras = linesToParagraphs(lines, base.width);
+    paragraphs.push(...paras);
+    byPage.push({ page: n, paragraphs: paras, confidence });
+    onProgress?.({ page: i + 1, pageCount: list.length, sourcePage: n, ratio: 1 });
   }
   canvas.width = canvas.height = 0;
-  return { paragraphs, pageConfidences, scale };
+  return { paragraphs, pageConfidences, scale, byPage };
 }

@@ -33,3 +33,7 @@ node_modules/
 
 # 세션 작업공간 (worktree 체크아웃)
 .claude/
+
+# 발표 자료 (슬라이드 그림·만드는 스크립트·PPT) — 저장소에 올리지 않고 각자 로컬에만 둔다
+docs/images/
+docs/*.pptx

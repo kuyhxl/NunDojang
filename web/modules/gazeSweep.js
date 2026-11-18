@@ -185,6 +185,8 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
   // 쪽의 관측 가로 범위를 모은다. observeMs를 주지 않으면 만들지 않는다 (지금 동작 그대로).
   const observer = observeMs ? createXObserver({ layout, observeMs }) : null;
   const speeds = [];
+  let textLeft = textLeftPx;   // 글 왼쪽 끝. 창 크기·가로 스크롤로 옮겨질 수 있어 setTextLeft로 갈아 끼운다
+  let lastObs = null;          // 관측 범위 (창이 닫힌 뒤). 착지권을 다시 잡을 때 함께 쓴다
   let line = 0;
   let enterMs = null;   // 지금 줄에 들어온 시각 (첫 표본에서 정한다)
   let yGapSince = null; // y가 크게 어긋난 상태가 시작된 시각
@@ -212,7 +214,7 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     // 관측 창이 이번에 닫히면 문턱을 갈아 끼운다. 이미 센 줄바꿈은 건드리지 않는다.
     if (observer) {
       const obs = observer.push(sample);
-      if (obs) { counter.setThresholds(sweepOptionsFor(layout, textLeftPx, { observedX: obs, maxGapMs })); onObserved?.(obs); }
+      if (obs) { lastObs = obs; counter.setThresholds(sweepOptionsFor(layout, textLeft, { observedX: obs, maxGapMs })); onObserved?.(obs); }
     }
     if (counter.push(sample)) {
       const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx);
@@ -240,8 +242,19 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     return null;
   }
 
+  /**
+   * 글 왼쪽 끝이 옮겨졌을 때 착지권만 새 자리로 맞춘다. 줄 번호·읽기 속도·이미 센 줄바꿈은 그대로 둔다.
+   * 왜: 착지권(글 왼쪽 + 단 폭 25%)을 쪽을 그릴 때 한 번만 재서, 창 크기를 바꾸면 옛 화면 좌표로 판정했다.
+   */
+  function setTextLeft(px) {
+    if (!Number.isFinite(px) || px === textLeft) return;
+    textLeft = px;
+    counter.setThresholds(sweepOptionsFor(layout, textLeft, { observedX: lastObs, maxGapMs }));
+  }
+
   return {
     push,
+    setTextLeft,
     get line() { return line; },
     get speed() { return speed(); },
     get lastSweep() { return counter.lastSweep; },

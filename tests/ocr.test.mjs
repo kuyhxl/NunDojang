@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectLines, wordsToLines, pageConfidence, renderScaleFor, OCR } from '../web/modules/ocr.js';
-import { linesToParagraphs } from '../web/modules/reflow.js';
+import { linesToParagraphs, reflowDocument, REFLOW } from '../web/modules/reflow.js';
 
 /** 그림 픽셀 기준 낱말 하나 */
 const W = (text, x0, y0, x1, y1, confidence = 90) => ({ text, confidence, bbox: { x0, y0, x1, y1 } });
@@ -132,4 +132,74 @@ test('인식한 줄이 reflow의 문단 잇기로 그대로 넘어간다', () =>
 
 test('빈 인식 결과는 빈 문단 목록이 된다 (부른 쪽에서 막는다)', () => {
   assert.deepEqual(linesToParagraphs(wordsToLines([], { scale: 2 }), 600), []);
+});
+
+// ---- 텍스트 쪽과 스캔 쪽이 섞인 문서
+
+/** PDF.js 문서 흉내. pages: [{texts:[[글, x, 위에서 잰 y]], image:[x0, y0(아래에서), 폭, 높이] | null}] */
+function fakePdf(pages, { w = 600, h = 800 } = {}) {
+  const OPS = { save: 1, restore: 2, transform: 3, paintFormXObjectBegin: 4, paintFormXObjectEnd: 5, paintImageXObject: 6 };
+  const doc = {
+    numPages: pages.length,
+    getMetadata: async () => ({ info: {} }),
+    getPage: async (n) => {
+      const pg = pages[n - 1];
+      return {
+        getViewport: () => ({ width: w, height: h }),
+        getTextContent: async () => ({ items: (pg.texts ?? []).map(([str, x, top]) => ({ str, width: str.length * 6, height: 12, fontName: 'f1', transform: [12, 0, 0, 12, x, h - top] })) }),
+        getOperatorList: async () => (pg.image
+          ? { fnArray: [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore], argsArray: [[], [pg.image[2], 0, 0, pg.image[3], pg.image[0], pg.image[1]], ['img'], []] }
+          : { fnArray: [], argsArray: [] })
+      };
+    }
+  };
+  return { doc, OPS };
+}
+const measure = (t) => t.length * 7;
+const textPage = (label) => ({ texts: [[`${label} 첫 줄입니다`, 50, 100], [`${label} 둘째 줄입니다`, 50, 130]] });
+
+test('글 없이 그림이 쪽을 덮은 쪽은 scanPages로 알려 준다 (예전에는 아무 표시 없이 빠졌다)', async () => {
+  const { doc, OPS } = fakePdf([textPage('앞'), { image: [0, 0, 600, 800] }, textPage('뒤')]);
+  const r = await reflowDocument(doc, measure, REFLOW, { OPS });
+  assert.deepEqual(r.scanPages, [2]);
+  assert.equal(r.pageParagraphs.length, 3);
+  assert.equal(r.pageParagraphs[1].length, 0);                 // 그 쪽은 비어 있다 — 부른 쪽이 인식한 글로 채운다
+  assert.ok(r.pages.length >= 1 && JSON.stringify(r.pages).includes('뒤 둘째 줄'));
+});
+
+test('글이 있는 쪽, 작은 그림만 있는 쪽, 빈 쪽은 스캔 쪽이 아니다', async () => {
+  const { doc, OPS } = fakePdf([
+    { ...textPage('본문'), image: [0, 0, 600, 800] },          // 배경 그림 위에 글이 있다 (검색 가능한 스캔본 포함)
+    { image: [100, 300, 300, 200] },                          // 그림 한 장만 있는 쪽 → 그림 자리로 보인다
+    {},                                                       // 정말 빈 쪽
+    textPage('끝')
+  ]);
+  const r = await reflowDocument(doc, measure, REFLOW, { OPS });
+  assert.deepEqual(r.scanPages, []);
+  assert.equal(r.pageParagraphs[1].filter((p) => p.kind === 'figure').length, 1);
+});
+
+test('문서 전체가 스캔이면 모든 쪽이 scanPages이고 재배치 쪽은 0 (전체 인식 경로로 간다)', async () => {
+  const { doc, OPS } = fakePdf([{ image: [0, 0, 600, 800] }, { image: [0, 0, 600, 800] }]);
+  const r = await reflowDocument(doc, measure, REFLOW, { OPS });
+  assert.deepEqual(r.scanPages, [1, 2]);
+  assert.equal(r.pages.length, 0);
+});
+
+test('타일로 나뉜 스캔 그림도 합쳐서 쪽을 덮으면 스캔 쪽이다', async () => {
+  const OPS = { save: 1, restore: 2, transform: 3, paintFormXObjectBegin: 4, paintFormXObjectEnd: 5, paintImageXObject: 6 };
+  const tiles = [[0, 400], [0, 0]];   // 위·아래 절반씩 (각각은 쪽의 50%)
+  const doc = {
+    numPages: 2, getMetadata: async () => ({ info: {} }),
+    getPage: async (n) => ({
+      getViewport: () => ({ width: 600, height: 800 }),
+      getTextContent: async () => ({ items: n === 1 ? [{ str: '글이 있는 쪽', width: 60, height: 12, fontName: 'f1', transform: [12, 0, 0, 12, 50, 700] }] : [] }),
+      getOperatorList: async () => (n === 1 ? { fnArray: [], argsArray: [] } : {
+        fnArray: tiles.flatMap(() => [OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore]),
+        argsArray: tiles.flatMap(([x, y]) => [[], [600, 0, 0, 400, x, y], ['t'], []])
+      })
+    })
+  };
+  const r = await reflowDocument(doc, measure, REFLOW, { OPS });
+  assert.deepEqual(r.scanPages, [2]);
 });

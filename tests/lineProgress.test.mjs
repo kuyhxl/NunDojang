@@ -265,5 +265,29 @@ test('evaluatePage: line-progress 정책이면 점수 = 읽은 줄 ÷ 전체 줄
   assert.throws(() => evaluatePage({ ...base, readLines: -1 }, cfg));   // 계약 밖 값은 조용히 고치지 않는다
 });
 
+test('글 왼쪽 끝이 옮겨지면(창 크기 변경) setTextLeft로 알려 줘야 줄바꿈이 다시 잡힌다', () => {
+  // 지면이 오른쪽으로 500px 옮겨졌다 (실측: 창 폭 1024 → 1100에서 캔버스 왼쪽 28 → 568px)
+  const SHIFT = 500;
+  const moved = readLines(P1).samples.map((s) => ({ ...s, xPx: s.xPx + SHIFT }));
+  // 옛 자리 그대로면 착지권(글 왼쪽 + 단 폭 25% = 800px) 밖이라 긴 줄 뒤 줄바꿈이 하나도 안 잡힌다
+  const stale = run(P1, moved);
+  // 새 자리를 알려 주면 옮기기 전과 똑같이 읽힌다
+  const fresh = createLineProgress({ lineWidths: P1, layout: LAYOUT, textLeftPx: LEFT });
+  fresh.setTextLeft(LEFT + SHIFT);
+  for (const s of moved) fresh.push(s);
+  assert.equal(fresh.readLines.length, P1.length, `읽음 ${fresh.readLines.join(',')}`);
+  assert.equal(fresh.thresholds.landingMaxX, LEFT + SHIFT + 0.25 * LAYOUT.columnPx);
+  assert.ok(stale.readLines.length < fresh.readLines.length, `옛 자리 ${stale.readLines.length}줄, 새 자리 ${fresh.readLines.length}줄`);
+});
+
+test('setTextLeft는 줄 번호와 이미 읽은 줄을 건드리지 않는다 (쪽 중간에서 불러도 된다)', () => {
+  const { samples } = readLines(P1, { to: 5 });
+  const P = run(P1, samples);
+  const before = { line: P.line, read: P.readLines.join(',') };
+  P.setTextLeft(LEFT + 300); P.setTextLeft(NaN);   // NaN은 무시
+  assert.deepEqual({ line: P.line, read: P.readLines.join(',') }, before);
+  assert.equal(P.thresholds.landingMaxX, LEFT + 300 + 0.25 * LAYOUT.columnPx);
+});
+
 console.log(`\n${pass} 통과, ${fail} 실패`);
 process.exit(fail ? 1 : 0);

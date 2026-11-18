@@ -23,7 +23,7 @@ export function toCsv(rows, columns) {
 export function samplesCsv(samples) { return toCsv(samples, SAMPLE_COLUMNS); }
 export function eventsCsv(events) { return toCsv(events, EVENT_COLUMNS); }
 
-export function sessionJson({ snapshot, detectorConfig, blinkConfig, cameraDiagnostics, detectorDiagnostics, mode, ocr = null }) {
+export function sessionJson({ snapshot, detectorConfig, blinkConfig, cameraDiagnostics, detectorDiagnostics, mode, ocr = null, unreadSourcePages = [] }) {
   return JSON.stringify({
     exportedAt: new Date().toISOString(),
     appVersion: APP_VERSION,
@@ -32,6 +32,8 @@ export function sessionJson({ snapshot, detectorConfig, blinkConfig, cameraDiagn
     mode, // 'real' | 'mock' | 'fixture'
     // 글자 인식으로 연 문서면 {langs, confidence, scale, version}. 읽은 글이 원본 글자와 다를 수 있다는 표시다.
     ocr,
+    // 스캔 쪽인데 글을 보여 주지 못한 원본 쪽 번호. 비어 있지 않으면 그 쪽은 읽기 확인에 들어가지 않았다.
+    unreadSourcePages,
     contractVersion: snapshot.contractVersion,
     detectorVersion: detectorConfig.detectorVersion,
     scorePolicyVersion: snapshot.configSnapshot.scorePolicyVersion,

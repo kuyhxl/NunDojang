@@ -97,6 +97,9 @@ const gazeLog = new URLSearchParams(location.search).has('gazelog')
 let gazeFit = null;        // 보정 판정 {xErrorPx, yErrorPx, yUsable}
 let gazeReference = null;  // 보정 때의 자세
 let pageLineBoxes = [];    // 지금 쪽의 줄 상자(캔버스 CSS px). 첫 줄 맞춤 자리를 잡는 데 쓴다
+let trackedTextLeft = NaN; // 줄바꿈 계수기들이 지금 알고 있는 글 왼쪽 끝 (화면 x). 옮겨지면 syncTextLeft가 다시 알려 준다
+let navSeq = 0;            // 쪽 넘김 번호. 넘기는 도중에 또 넘기면 앞선 넘김은 여기서 자기가 밀린 것을 안다
+const passedSeen = new Set();   // 기준을 충족한 적 있는 pageId. 다시 미달이 되는 순간 이유를 한 번 알리려고 둔다
 // 보조 점수(기록 전용, 공식 점수 아님): 쪽마다 시선 x 줄바꿈 수를 누적한다. pageId → {gazeSweeps}
 const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
@@ -140,17 +143,17 @@ async function openPdfFile(file) {
   await closeDocument();
   try {
     if (pdf.mode === 'reflow') setMsg('viewerMsg', `텍스트를 뽑아 ${pdf.layout.fontPx}px로 다시 배치하는 중…`, '');
-    const { pageCount: n, sourcePageCount, ocr } = await pdf.open(file, { onProgress: showOpenProgress });
+    const { pageCount: n, sourcePageCount, ocr, unreadSourcePages = [] } = await pdf.open(file, { onProgress: showOpenProgress });
     pageCount = n; currentFile = file; currentDocName = file.name;
     $('paneLabel').textContent = file.name.replace(/\.pdf$/i, '');
     $('docName').textContent = pdf.mode === 'reflow'
-      ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px${ocr ? ' · 글자 인식' : ''}`
+      ? `원본 ${sourcePageCount}쪽 → ${n}쪽 · ${pdf.layout.fontPx}px${ocr ? ' · 글자 인식' : ''}${unreadSourcePages.length ? ` · 표시 못 한 쪽 ${unreadSourcePages.length}` : ''}`
       : `${n}쪽`;
     $('searchInput').disabled = false;
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
     sessionT0 = performance.now(); segmentCounter = 0;
-    auxPages.clear(); readByPage.clear();
+    auxPages.clear(); readByPage.clear(); passedSeen.clear();
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
@@ -160,7 +163,17 @@ async function openPdfFile(file) {
     checkZoom();
     // 인식한 글은 틀릴 수 있다. 숨기지 말고 문서를 여는 내내 띄워 둔다 (봉인은 원본 글자를 보증하지 않는다).
     // 배율 안내보다 뒤에 둔다 — 둘 다 있으면 이쪽이 더 중요하다.
-    if (ocr) setMsg('viewerMsg', `텍스트가 없는 PDF라 글자를 인식해 읽었습니다 (${ocr.langs}, 확신도 ${Math.round(ocr.confidence)}%). 인식이 틀린 글자가 있을 수 있습니다.`, 'warn');
+    // 텍스트 쪽과 스캔 쪽이 섞인 문서: 스캔 쪽만 인식했으면 그 쪽 번호를, 못 읽은 쪽이 있으면 그것도 반드시 알린다.
+    // (예전에는 스캔 쪽이 아무 말 없이 빠져, 보여 주지도 않은 쪽까지 읽은 것으로 봉인됐다)
+    const notes = [];
+    if (ocr) {
+      const where = ocr.sourcePages ? `원본 ${ocr.sourcePages.join('·')}쪽은 텍스트가 없어` : '텍스트가 없는 PDF라';
+      notes.push(`${where} 글자를 인식해 읽었습니다 (${ocr.langs}, 확신도 ${Math.round(ocr.confidence)}%). 인식이 틀린 글자가 있을 수 있습니다.`);
+    }
+    if (unreadSourcePages.length) {
+      notes.push(`원본 ${unreadSourcePages.join('·')}쪽은 스캔한 그림이라 글을 보여 주지 못했습니다${ocrOff ? ' (글자 인식 꺼짐)' : ''}. 이 쪽은 읽기 확인에 들어가지 않습니다.`);
+    }
+    if (notes.length) setMsg('viewerMsg', notes.join(' '), 'warn');
     setModeBadge(true);
   } catch (err) {
     setMsg('viewerMsg', err.message, 'bad');
@@ -168,7 +181,7 @@ async function openPdfFile(file) {
 }
 /** 문서 여는 동안의 진행 표시. 글자 인식은 쪽당 몇 초씩 걸려 알려 주지 않으면 멈춘 것처럼 보인다. */
 function showOpenProgress(s) {
-  if (s.stage === 'ocr-load') setMsg('viewerMsg', '텍스트가 없는 PDF입니다. 글자 인식을 준비하는 중… (처음 한 번은 오래 걸립니다)', '');
+  if (s.stage === 'ocr-load') setMsg('viewerMsg', '텍스트가 없는 쪽이 있습니다. 글자 인식을 준비하는 중… (처음 한 번은 오래 걸립니다)', '');
   else if (s.stage === 'ocr-page') setMsg('viewerMsg', `글자를 읽는 중… ${s.page}/${s.pageCount}쪽`, '');
 }
 for (const id of ['pdfInput', 'pdfInput2']) {
@@ -179,6 +192,17 @@ for (const el of [$('dropZone'), document.querySelector('.pane')]) {
   el.addEventListener('dragover', (e) => { e.preventDefault(); $('dropZone').classList.add('is-over'); });
   el.addEventListener('dragleave', () => $('dropZone').classList.remove('is-over'));
   el.addEventListener('drop', async (e) => { e.preventDefault(); $('dropZone').classList.remove('is-over'); await openPdfFile(e.dataTransfer?.files?.[0]); });
+}
+
+// 지면 밖(왼쪽 패널·아래 막대·보정 화면)에 떨어뜨린 파일은 받지 않는다. 막지 않으면 브라우저가 그 파일을 열면서
+// 이 페이지를 떠나, 읽던 기록이 통째로 사라진다. 지면 안의 드롭은 위 처리기가 이미 받았다.
+for (const type of ['dragover', 'drop']) {
+  window.addEventListener(type, (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    const el = e.target instanceof Element ? e.target : e.target?.parentElement;
+    if (type === 'dragover' && !el?.closest('.pane')) e.dataTransfer.dropEffect = 'none';   // "여기는 못 놓는다" 커서
+  });
 }
 
 $('prevBtn').addEventListener('click', () => goToPage(currentPage - 1));
@@ -240,15 +264,20 @@ async function goToPage(pageId) {
   if (!store || pageId < 1 || pageId > pageCount) return;
   if (calibration.active) return;   // 보정·첫 줄 맞춤 중에는 쪽을 넘기지 않는다
   // 15절 순서: 구간 닫기 → detector.reset → 렌더·줄 수 → settle → 새 구간
+  // 기다리는 사이에 또 넘기면 앞선 넘김은 그만둔다. 그러지 않으면 앞선 넘김의 settle이 먼저 끝나면서
+  // **새 쪽**의 구간을 열어 버려, 새 쪽은 500ms를 다 기다리지 않고 측정이 시작됐다.
+  const my = ++navSeq;
   endSegment('page_change');
   detector?.reset();
   currentPage = pageId;
   const info = await showPage(pageId);
-  if (!info) return; // 늦은 렌더
+  if (!info || my !== navSeq) return; // 늦은 렌더 · 밀린 넘김
   // 쪽을 넘길 때마다 첫 줄에서 다시 맞춘다. 읽는 동안 고개가 조금씩 들리고 눈꺼풀이 내려와
   // 세로가 밀리는데(실측: 한 쪽 지나 +90px), 첫 줄 맞춤은 시작 순간만 바로잡기 때문이다.
   if (gazeFit && info.supported && !document.hidden) await anchorFirstLine();
+  if (my !== navSeq) return;
   await sleep(config.pageSettleMs);
+  if (my !== navSeq) return;
   if (measuring && info.supported && !document.hidden) beginSegment();
 }
 
@@ -260,13 +289,14 @@ async function showPage(pageId) {
   pageLineBoxes = info.lineBoxes ?? [];
   eyeGlass.setLines(pageLineBoxes);
   const gapMs = validTime ? SWEEP_MAX_GAP_MS : null;
+  trackedTextLeft = textLeftPx();
   // gazeSweep은 보조 점수(기록 전용)라 관측 창을 쓰지 않는다. 줄 판정 쪽만 11절 제안을 받는다.
   gazeSweep = pdf.mode === 'reflow'
-    ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, textLeftPx(), { maxGapMs: gapMs }))
+    ? createGazeSweepCounter(sweepOptionsFor(pdf.layout, trackedTextLeft, { maxGapMs: gapMs }))
     : null;
   lineProg = pdf.mode === 'reflow'
     ? createLineProgress({
-      lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: textLeftPx(),
+      lineWidths: pageLineBoxes.map((b) => b.textWidth), layout: pdf.layout, textLeftPx: trackedTextLeft,
       lineCenterY: lineCenterYPx, yFix,   // lineCenterY는 비교·기록용. yFix가 꺼져 있으면 줄 번호를 건드리지 않는다
       maxGapMs: validTime ? LP_MAX_GAP_MS : null,
       observeMs: xWindow ? X_OBSERVE_POLICY.observeMs : null,
@@ -313,11 +343,12 @@ async function leaveFocus() {
 }
 
 async function closeDocument() {
+  navSeq++;   // 넘기던 쪽이 있으면 그만두게 한다 (닫힌 문서의 구간을 열지 않게)
   endSegment('document_closed');
   clearCalibration(); await stopGaze();
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
-  auxPages.clear(); readByPage.clear(); gazeSweep = null; lineProg = null; renderGauge();
+  auxPages.clear(); readByPage.clear(); passedSeen.clear(); gazeSweep = null; lineProg = null; renderGauge();
   document.body.classList.remove('is-focus'); $('navFocusExitBtn').hidden = true;
   if (pdf) await pdf.close();
   $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
@@ -345,10 +376,24 @@ function endSegment(reason) {
   logAuxScore(currentPage, reason);
 }
 
-/** 지금 쪽 글 왼쪽 끝의 화면 x (시선 좌표와 같은 뷰포트 CSS px). 가로 스크롤이 없으면 쪽 안에서 바뀌지 않는다. */
+/** 지금 쪽 글 왼쪽 끝의 화면 x (시선 좌표와 같은 뷰포트 CSS px). 창 크기를 바꾸거나 틀 안에서 가로로 굴리면 바뀐다. */
 function textLeftPx() {
   const first = pageLineBoxes[0];
   return first ? $('pdfCanvas').getBoundingClientRect().left + first.left : NaN;
+}
+/**
+ * 글 왼쪽 끝이 옮겨졌으면 줄바꿈 착지권을 새 자리로 맞춘다. 시선 표본마다 부른다 (옮겨지지 않았으면 아무 일도 안 한다).
+ * 왜: 착지권을 쪽을 그릴 때 한 번만 재서, 창 크기를 바꾸고 재보정해도 쪽을 넘기기 전까지 옛 화면 좌표로 판정했다.
+ * 줄 번호·읽음은 건드리지 않는다 — 쪽 중간에서 다시 그려 줄 추적을 처음으로 돌리지 않으려고 문턱만 갈아 끼운다.
+ */
+function syncTextLeft() {
+  if (!lineProg && !gazeSweep) return;
+  const left = textLeftPx();
+  if (!Number.isFinite(left) || Math.abs(left - trackedTextLeft) < 0.5) return;
+  trackedTextLeft = left;
+  lineProg?.setTextLeft(left);
+  gazeSweep?.setThresholds(sweepOptionsFor(pdf.layout, left, { maxGapMs: validTime ? SWEEP_MAX_GAP_MS : null }));
+  gazeLog?.meta({ type: 'textLeft', pageId: currentPage, textLeftPx: Math.round(left * 10) / 10 });
 }
 /** 줄 k 중심의 화면 y (시선 좌표와 같은 기준). 스크롤·읽기 모드로 자리가 바뀌므로 그때그때 잰다. */
 function lineCenterYPx(k) {
@@ -517,7 +562,7 @@ async function startGaze() {
     gazeTracker ??= await createGazeTracker({
       videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
       options: { shareVideo: true },
-      onGaze: (g) => { latestGaze = g; countGazeSweep(g); trackLine(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
+      onGaze: (g) => { latestGaze = g; syncTextLeft(); countGazeSweep(g); trackLine(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
       onError: handleGazeError
     });
     await gazeTracker.start();
@@ -748,6 +793,7 @@ function renderPanel() {
   $('validTime').textContent = `${(p.validMs / 1000).toFixed(1)}s / ${(p.activeMs / 1000).toFixed(1)}s (${Math.round(ev.validRatio * 100)}%)`;
   $('blinkCount').textContent = p.blinkCount ?? '미설정';
   $('pageStatus').textContent = statusText(ev);
+  noteIfUnpassed(currentPage, ev);
   if (scoreLines && ev.passed !== gaugePassed) { gaugePassed = ev.passed; renderGauge(); }   // 통과 선을 '통과 ✓'로
   $('pageStatus').className = `st-${ev.status}`;
 
@@ -763,6 +809,20 @@ function renderPanel() {
   $('navSignBtn').disabled = !snap.canSign;
   $('navPages').textContent = `페이지 ${currentPage}/${pageCount}`;
   $('navScore').textContent = `점수 ${formatScore(ev)}`;
+}
+
+/**
+ * 기준을 충족했던 쪽이 다시 미달이 되면 이유를 한 번 알린다.
+ * 다시 미달이 되는 것 자체는 공통 스크립트의 규칙이다 ("한 번 통과했다고 영구 통과로 고정하지 않습니다 …
+ * 앱은 그 이유를 표시합니다"). 고정하지 않고, 왜 서명이 다시 잠겼는지만 말해 준다.
+ */
+function noteIfUnpassed(pageId, ev) {
+  if (ev.passed) { passedSeen.add(pageId); return; }
+  if (!passedSeen.delete(pageId)) return;
+  const why = ev.status === PAGE_STATUS.INSUFFICIENT_QUALITY
+    ? `측정을 켠 채 눈이 보이지 않은 시간이 늘어 유효 측정 비율이 ${Math.round(ev.validRatio * 100)}%로 내려갔습니다 (기준 ${Math.round(config.minValidRatio * 100)}%). 화면을 보며 더 읽으면 다시 올라갑니다.`
+    : `${statusText(ev)}.`;
+  setMsg('viewerMsg', `${pageId}쪽이 다시 기준 미달이 됐습니다. ${why}`, 'warn');
 }
 
 function statusText(ev) {
@@ -796,7 +856,10 @@ function drawSeries(canvas, data, lo, hi, color) {
 }
 
 // ---------- 서명 ----------
-sigPad = createSignaturePad($('sigPad'));
+// 획을 다 그었을 때 서명 그림을 잡는다. 캔버스의 mouseup만 들으면 밖에서 뗀 경우와 터치를 놓친다 (signature.js).
+sigPad = createSignaturePad($('sigPad'), {
+  onChange: () => { if (!sigPad.isEmpty()) { signaturePng = sigPad.toPngDataUrl(); signatureMethod = 'drawn'; } updateSignComplete(); }
+});
 const openSign = () => {
   endSegment('sign_requested'); measuring = false; updateMeasureBtn();
   renderPanel();
@@ -808,7 +871,6 @@ $('signRequestBtn').addEventListener('click', openSign);
 $('navSignBtn').addEventListener('click', openSign);
 $('consentChk').addEventListener('change', updateSignComplete);
 $('sigClearBtn').addEventListener('click', () => { sigPad.clear(); signaturePng = null; signatureMethod = null; updateSignComplete(); });
-$('sigPad').addEventListener('mouseup', () => { if (!sigPad.isEmpty()) { signaturePng = sigPad.toPngDataUrl(); signatureMethod = 'drawn'; } updateSignComplete(); });
 $('sigUpload').addEventListener('change', async (e) => {
   const f = e.target.files?.[0]; if (!f) return;
   try { signaturePng = await imageFileToPngDataUrl(f); signatureMethod = 'uploaded'; setMsg('signMsg', `이미지 서명 준비: ${f.name}`, ''); }
@@ -865,7 +927,7 @@ function resetSeal() {
 function buildSessionJson() {
   return sessionJson({ snapshot: store.getSnapshot(), detectorConfig: DETECTOR_CONFIG, blinkConfig: BLINK_CONFIG,
     cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE,
-    ocr: pdf?.ocrInfo ?? null });
+    ocr: pdf?.ocrInfo ?? null, unreadSourcePages: pdf?.unreadSourcePages ?? [] });
 }
 $('dlSamplesBtn').addEventListener('click', () => store && download('samples.csv', samplesCsv(store.getLogs().samples), 'text/csv'));
 $('dlEventsBtn').addEventListener('click', () => store && download('events.csv', eventsCsv(store.getLogs().events), 'text/csv'));

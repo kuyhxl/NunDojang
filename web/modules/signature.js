@@ -1,7 +1,12 @@
 // 서명 입력 — C 소유. 캔버스 그리기(기본) + 이미지 업로드(선택).
 // 최종 서명은 PNG dataURL과 SHA-256 해시로 세션에 저장한다. 서버로 보내지 않는다.
 
-export function createSignaturePad(canvas) {
+/**
+ * @param {{onChange?: () => void}} [o] onChange: 획 하나를 다 그었을 때 불린다.
+ *   마우스를 **캔버스 밖에서** 떼거나 터치로 그려도 불린다 — 캔버스의 mouseup만 들으면 둘 다 놓친다
+ *   (밖에서 떼면 캔버스에 mouseup이 안 오고, 터치는 preventDefault 때문에 마우스 이벤트가 아예 안 생긴다).
+ */
+export function createSignaturePad(canvas, { onChange } = {}) {
   const ctx = canvas.getContext('2d');
   let drawing = false;
   let strokes = 0;
@@ -14,15 +19,16 @@ export function createSignaturePad(canvas) {
   };
   const down = (e) => { drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
   const move = (e) => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); strokes++; e.preventDefault(); };
-  const up = () => { drawing = false; };
+  const up = () => { if (!drawing) return; drawing = false; onChange?.(); };
   canvas.addEventListener('mousedown', down); canvas.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
-  canvas.addEventListener('touchstart', down, { passive: false }); canvas.addEventListener('touchmove', move, { passive: false }); window.addEventListener('touchend', up);
+  canvas.addEventListener('touchstart', down, { passive: false }); canvas.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', up); window.addEventListener('touchcancel', up);
 
   return {
     clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); strokes = 0; },
     isEmpty() { return strokes === 0; },
     toPngDataUrl() { return canvas.toDataURL('image/png'); },
-    destroy() { window.removeEventListener('mouseup', up); window.removeEventListener('touchend', up); }
+    destroy() { window.removeEventListener('mouseup', up); window.removeEventListener('touchend', up); window.removeEventListener('touchcancel', up); }
   };
 }
 
