@@ -4,7 +4,11 @@
 const FEATURE_COLUMNS = Object.freeze([
   ['eye_h', 'eyeH'], ['eye_v', 'eyeV'], ['eye_h_l', 'eyeHL'], ['eye_h_r', 'eyeHR'], ['eye_v_l', 'eyeVL'], ['eye_v_r', 'eyeVR'],
   ['head_yaw', 'headYaw'], ['head_pitch', 'headPitch'], ['face_cx', 'faceCx'], ['face_cy', 'faceCy'],
-  ['face_scale', 'faceScale'], ['openness', 'openness']
+  ['face_scale', 'faceScale'], ['openness', 'openness'],
+  // 고개 기울기(어깨 쪽으로 갸웃한 각도). 지금은 보정 관문(6도)에만 쓰고 시선 계산에는 넣지 않는다.
+  // 그래도 남긴다 — 기록은 되돌릴 수 없다. 안 남기면 나중에 "그때 기울어서 틀렸나"를 물어볼 수조차 없다.
+  // 열은 맨 뒤에 붙는다. B의 loader는 이름으로 읽으므로 깨지지 않는다 (analysis/src/load_app_logs.py).
+  ['roll_deg', 'rollDeg']
 ]);
 
 export const GAZE_LOG_COLUMNS = Object.freeze([
