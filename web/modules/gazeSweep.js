@@ -6,6 +6,7 @@
 //    쪽 끝에서 버튼·다른 곳을 보는 순간까지 세어 31번(기대 약 25번)이 됐다.
 //    → "줄 처음 근처에 착지" + "세로로 한 줄 넘게 위로 튀지 않음"을 더해 27번.
 //  - 세로는 절대 위치가 수십 px 밀려도 0.4초 안의 상대 변화는 3~5px로 정확해서 이 판단에 쓸 수 있다.
+//    (이것은 옛 엔진의 사정이다. 2026-11-21에 바꾼 엔진은 줄바꿈 순간 세로가 최대 200px 튄다 → SWEEP_UP_JUMP_PX)
 // DOM을 쓰지 않는 순수 모듈이라 node에서 시험할 수 있다.
 
 /** 표본이 이보다 오래 끊기면 그 사이를 이어서 보지 않는다 (CSS px가 아니라 ms).
@@ -89,6 +90,14 @@ export const SWEEP_DROP_RATIO = 0.19;
 export const SWEEP_WINDOW_MS_WIDE = 600;
 /** 착지 구역: 글 왼쪽 끝에서 단 폭의 25% 안 (시선 x가 실제보다 왼쪽으로 70px 안팎 밀린 경우도 받는다) */
 export const SWEEP_LANDING_RATIO = 0.25;
+/** 줄바꿈으로 돌아올 때 세로가 위로 이만큼(CSS px)까지 튀어도 받는다. 더 크게 튀면 버튼·다른 곳을 본 것으로 본다.
+ *  전에는 한 줄(줄 간격)이었다 — "0.4초 안의 세로 상대 변화는 3~5px로 정확"하던 옛 엔진(홍채 회귀) 기준이다.
+ *  2026-11-21에 바꾼 엔진(BlazeGaze)은 가로로 크게 움직이는 순간 세로가 함께 튄다.
+ *  실측(기록 20261121-182650, 한 사람): 단 폭 절반 넘게 돌아온 줄바꿈 31개의 세로 변화가 +105 ~ −199px,
+ *  옆 패널을 보러 간 이동은 −253px부터였다(182427 포함). 한 줄 기준으로는 그 31개 중 14개가 첫 표본에서 버려졌다.
+ *  고친 뒤 정독 기록(20261121-192755)에서는 받아들인 줄바꿈 31개가 +96 ~ −203px, 버린 것은 쪽 끝에서 눈을 뗀 두 번(−290px 이하)뿐이었다.
+ *  잠정값이다 — 아직 한 사람이다. 사람이 늘면 다시 볼 것 (docs/comprehension_evidence.md 20-6·20-7). */
+export const SWEEP_UP_JUMP_PX = 240;
 
 /**
  * 단 배치로 계수기 설정을 만든다.
@@ -107,7 +116,7 @@ export function sweepOptionsFor(layout, textLeftPx, { observedX = null, maxGapMs
     // 둘 중 **넓은 쪽**을 쓴다. 개인 기준이 지금보다 더 깐깐해져서 잘 읽던 쪽이 떨어지는 일은 막는다
     // (실측: 상대 기준만 쓰면 마지막 짧은 쪽이 5→2·8→6으로 줄었다. docs/comprehension_evidence.md 11절)
     landingMaxX: perCut === null ? absCut : (absCut === null ? perCut : Math.max(absCut, perCut)),
-    minDyPx: -layout.lineHeightPx,
+    minDyPx: -Math.max(layout.lineHeightPx, SWEEP_UP_JUMP_PX),
     maxGapMs
   };
 }
@@ -120,18 +129,37 @@ export const LOCK_LONG_LINE_RATIO = 0.315;
  * 줄바꿈이 검출됐을 때 넘어갈 줄 번호.
  * 짧은 줄 뒤 줄바꿈은 잘 안 잡히므로, 검출된 줄바꿈은 "지금 줄부터 처음 나오는 긴 줄을 방금 끝냈다"는 뜻으로 본다.
  * 예) 긴 줄 0 → 짧은 줄 1 → 긴 줄 2: 1에 있다가 줄바꿈이 잡히면 2를 끝낸 것으로 보고 3으로 간다.
+ *
+ * 단, **시선이 어디까지 갔다가 돌아왔는지(reachPx)** 를 주면 그것으로 먼저 가린다.
+ * 돌아오기 전 최고점이 긴 줄 끝이 아니라 짧은 줄 끝 근처였다면, 그 줄바꿈은 짧은 줄 자신의 것이다 → 한 줄만 넘긴다.
+ * 왜: "짧은 줄 뒤 줄바꿈은 안 잡힌다"는 시선 x가 0.72배로 눌려 찍히던 때의 사정이다. 눌리지 않으면 잡히고,
+ *     그때 두 줄을 넘기면 **아직 읽지 않은 긴 줄을 건너뛴다.** 추적기는 뒤로 돌아가지 않으므로 그 줄은 끝까지 안 읽음으로 남는다
+ *     (기록 20261121-182650 3쪽: 177px 줄에서 최고점 523 → 착지 370이 잡혀 768px 줄을 건너뜀, 10/12).
  * @param {number} current 지금 줄 번호 (0부터)
  * @param {number[]} lineWidths 글줄 폭
  * @param {number} columnPx 단 폭
+ * @param {number} [ratio] 긴 줄로 볼 최소 폭 비율
+ * @param {number|null} [reachPx=null] 돌아오기 전 최고점 x − 글 왼쪽 끝. null이면 보지 않는다 (옛 동작)
  * @returns {number} 새 줄 번호 (마지막 줄을 넘지 않는다)
  */
-export function nextLineAfterSweep(current, lineWidths, columnPx, ratio = LOCK_LONG_LINE_RATIO) {
+export function nextLineAfterSweep(current, lineWidths, columnPx, ratio = LOCK_LONG_LINE_RATIO, reachPx = null) {
   const n = Array.isArray(lineWidths) ? lineWidths.length : 0;
   if (n === 0) return 0;
   const last = n - 1;
   const cur = Math.min(Math.max(0, current | 0), last);
   const min = ratio * columnPx;
-  for (let j = cur; j < last; j++) if (lineWidths[j] >= min) return j + 1;
+  for (let j = cur; j < last; j++) {
+    if (lineWidths[j] < min) continue;
+    if (j > cur && Number.isFinite(reachPx)) {
+      // 지금 줄부터 j 앞까지는 모두 짧다. 그 가운데 가장 긴 줄과 긴 줄 j 중 어느 쪽 끝에 더 가까이 갔었는지로 가린다.
+      // 경계는 두 폭의 **기하평균**이다. 시선 x는 회차에 따라 0.7~1.2배로 눌리거나 늘어 찍히는데(배율을 모른다),
+      // 배율이 곱으로 걸리므로 산술평균이 아니라 기하평균이 두 가설의 한가운데다.
+      let longestShort = 0;
+      for (let k = cur; k < j; k++) longestShort = Math.max(longestShort, lineWidths[k]);
+      if (reachPx < Math.sqrt(longestShort * lineWidths[j])) return cur + 1;
+    }
+    return j + 1;
+  }
   return Math.min(cur + 1, last);   // 남은 줄이 모두 짧으면 한 줄만
 }
 
@@ -218,7 +246,10 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
       if (obs) { lastObs = obs; counter.setThresholds(sweepOptionsFor(layout, textLeft, { observedX: obs, maxGapMs })); onObserved?.(obs); }
     }
     if (counter.push(sample)) {
-      const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx);
+      // 돌아오기 전 어디까지 갔었는지로 "짧은 줄 자신의 줄바꿈"과 "그 뒤 긴 줄의 줄바꿈"을 가린다
+      const peakX = counter.lastSweep?.peakX;
+      const reach = Number.isFinite(peakX) && Number.isFinite(textLeft) ? peakX - textLeft : null;
+      const from = line, to = nextLineAfterSweep(line, widths, layout.columnPx, LOCK_LONG_LINE_RATIO, reach);
       const dt = (t - enterMs) / 1000;
       if (to === from + 1 && widths[from] >= longMin && dt > 0.5) speeds.push(widths[from] / dt);
       line = to; enterMs = t; yGapSince = null;
