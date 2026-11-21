@@ -436,6 +436,7 @@ function trackKeySpans(sample, tMs, heard = null) {
   }
   keyDone.set(currentPage, done);
   renderKeyMarks();
+  renderGauge();      // 채워진 줄의 왼쪽 표식을 빨강에서 원래 색으로
   throttledRender();
 }
 /** 지금 쪽의 중요 표시 감시를 (다시) 만든다. 앞서 채운 것은 되살린다. 마이크가 돌고 있으면 소리 내어 읽기를 요구한다. */
@@ -663,8 +664,14 @@ function renderGauge() {
   gaugePassed = passed;
   // 지나갔는데 읽음이 안 된 줄은 빨강. 아직 안 간 줄은 회색 그대로, 지금 줄은 읽는 중이므로 빨갛게 하지 않는다
   const reached = reachedByPage.get(currentPage) ?? 0;
-  const ticks = pageLineBoxes.map((b, k) =>
-    `<i class="tick${read.has(k) ? ' is-read' : k < reached && (k !== cur || !segmentOpen) ? ' is-missed' : ''}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`).join('');
+  const ticks = pageLineBoxes.map((b, k) => {
+    const passed = k < reached && (k !== cur || !segmentOpen);
+    // 중요 표시(밑줄·형광펜)가 안 채워진 줄은, 눈으로 읽어 읽음이 됐더라도 지나간 뒤에는 빨강이다 —
+    // 소리 내어(또는 천천히) 읽어야 하는 줄을 그냥 지나쳤다는 표시. 채워지면 원래 색으로 돌아간다. 점수는 건드리지 않는다
+    const keyPending = passed && !!keyWatch?.pendingOnLine(k);
+    const state = keyPending ? ' is-missed' : read.has(k) ? ' is-read' : passed ? ' is-missed' : '';
+    return `<i class="tick${state}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`;
+  }).join('');
   const pb = passIdx === null ? null : pageLineBoxes[passIdx];
   const mark = pb ? `<div class="pass-mark${passed ? ' is-passed' : ''}" style="left:${pb.left}px;width:${pb.width}px;top:${pb.top + pb.height}px"><span>${passed ? '통과 ✓' : '여기까지 읽으면 통과'}</span></div>` : '';
   el.innerHTML = ticks + mark;
