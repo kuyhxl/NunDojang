@@ -5,6 +5,8 @@ import { POSE_RULES, COLLECT, HEAD_TURNS, FIT_LIMITS, evaluatePose, poseDrifted,
 export const DARK_MESSAGE = '카메라에 얼굴이 어둡게 보여요. 조명을 켜거나 밝은 곳으로 옮겨 주세요.';
 const UNREADABLE_MESSAGE = '눈을 충분히 읽지 못했어요. 눈을 뜨고 다시 눌러 주세요';
 const FACE_FRONT_MESSAGE = '이제 고개를 정면으로 돌려 주세요';
+/** 결과 화면이 뜬 뒤 이만큼(ms)은 스페이스바를 받지 않는다 (연달아 누른 키로 건너뛰지 않게) */
+const RESULT_KEY_GUARD_MS = 600;
 const ANCHOR_MESSAGE = '첫 줄 왼쪽의 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요';
 // 첫 줄 맞춤·재중심은 점 하나로 치우침 전체를 정한다. 짧으면 그 순간의 흔들림이 그대로 남는다
 // (실측: 0.9초 분량일 때 맞춘 뒤 남은 치우침 6·7·45px). 다점 보정 한 점보다 길게 본다.
@@ -25,7 +27,7 @@ export function createLightMeter(video, size = 32) {
   };
 }
 
-export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, collect = COLLECT }) {
+export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, collect = COLLECT, resultNote = '' }) {
   const root = document.createElement('div');
   root.className = 'calib'; root.hidden = true;
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', '시선 보정');
@@ -43,7 +45,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     <section class="calib-result" hidden>
       <h2 class="calib-title"></h2>
       <p class="calib-sub calib-result-text"></p>
-      <div class="calib-actions"><button class="btn-ghost calib-retry" type="button">다시 보정</button><button class="btn-white calib-done" type="button">읽기 시작</button></div>
+      <div class="calib-actions"><button class="btn-ghost calib-retry" type="button">다시 보정</button><button class="btn-white calib-done" type="button">읽기 시작 <span class="kbd">Space</span></button></div>
     </section>
     <div class="calib-turn" hidden>
       <div class="calib-turn-arrow"><svg viewBox="0 0 120 120" aria-hidden="true"><path d="M104 60H22M58 24 22 60l36 36"/></svg></div>
@@ -248,9 +250,10 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
   }
 
   let lastFit = null;
+  let resultShownAt = 0;
   function showResult() {
     root.classList.remove('is-light');
-    phase = 'result'; show(resultView); skip.hidden = true;
+    phase = 'result'; show(resultView); skip.hidden = true; resultShownAt = performance.now();
     const turnPoints = new Set(points.filter((p) => p.turn).map((p) => p.index));
     const quality = assessFit(gaze.calibration.fit(collected), { width: window.innerWidth, height: window.innerHeight }, FIT_LIMITS, turnPoints);
     lastFit = quality.ok ? quality : null;
@@ -262,7 +265,8 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     }
     $('.calib-result .calib-title').textContent = '보정 완료';
     const yText = quality.yUsable ? `세로 약 ${Math.round(quality.yErrorPx)}px` : '세로는 오차가 커서 사용하지 않습니다';
-    $('.calib-result-text').textContent = `예상 오차는 가로 약 ${Math.round(quality.xErrorPx)}px, ${yText}입니다. 이 자세를 유지해 주세요.`;
+    // resultNote: 읽기 전에 미리 알려 둘 한 문장 (예: 물방울 색의 뜻). 읽는 도중에 글로 알리면 눈이 그리로 간다
+    $('.calib-result-text').textContent = `예상 오차는 가로 약 ${Math.round(quality.xErrorPx)}px, ${yText}입니다. 이 자세를 유지해 주세요.${resultNote ? ` ${resultNote}` : ''}`;
   }
 
   function open(tracker, nextMode, begin) {
@@ -274,6 +278,13 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
 
   function onKey(e) {
     if (e.code === 'Space' && pointsView.hidden === false) { e.preventDefault(); if (!e.repeat) startCollect(); }
+    // 결과 화면: 스페이스바·Enter로 "읽기 시작". 점을 누르던 손을 그대로 쓴다.
+    // 마지막 점에서 누르고 있던 키(반복)나 곧바로 따라온 두 번째 누름으로 결과를 건너뛰지 않게, 화면이 뜨고 0.6초는 받지 않는다.
+    else if ((e.code === 'Space' || e.code === 'Enter') && resultView.hidden === false) {
+      e.preventDefault();
+      const done = $('.calib-done');
+      if (!e.repeat && !done.hidden && performance.now() - resultShownAt > RESULT_KEY_GUARD_MS) done.click();
+    }
   }
   dot.addEventListener('click', startCollect);
   skip.addEventListener('click', () => finish({ status: 'skipped' }));

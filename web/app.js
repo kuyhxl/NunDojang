@@ -43,8 +43,9 @@ const validTime = urlParams.has('validtime');
 // 재생 결과: 전체 78.7% → 84.1%, 거짓 탈락 기록 61.2% → 79.1%, 나빠진 쪽 1개.
 // 순환이 완전히 없어지지는 않는다 — 훑기 대조군으로 확인하기 전에는 합의하지 말 것 (11-3절).
 const xWindow = urlParams.has('xwindow');
-// 읽기 속도·가로 폭 경고 (pace.js). 기본 켜짐 — ?pace=0 으로 끈다.
-// 점수·통과 여부는 건드리지 않고 "빠르게 훑은 것 같다"를 알리고 기록에만 남긴다.
+// 읽기 속도 경고 (pace.js). 기본 켜짐 — ?pace=0 으로 끈다.
+// 점수·통과 여부는 건드리지 않고 "빠르게 지나가고 있다"를 알리고 기록에만 남긴다.
+// 읽는 동안에는 글자를 띄우지 않는다 — 물방울과 지금 줄 표식의 색만 바꾼다. 문장은 측정을 멈춘 뒤에 보인다.
 // 관문은 한 사람의 기록(성실 47쪽·훑기 11쪽)에서 고른 잠정값이다 (docs/comprehension_evidence.md 16절).
 const paceWarn = urlParams.get('pace') !== '0';
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
@@ -87,7 +88,8 @@ const graph = { iris: [], ear: [], max: 300 };
 const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
 if (yLock) eyeGlass.setLineAnchor(1);   // 줄 밑선
-const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview') });
+const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview'),
+  resultNote: paceWarn ? '읽는 동안 물방울이 주황색으로 바뀌면 너무 빠르게 지나가고 있다는 뜻입니다.' : '' });
 let gazeTracker = null;    // 시선 좌표 추정기. A의 영상을 함께 읽으며 물방울 표시에만 쓰고 점수에는 쓰지 않는다
 let latestGaze = null;     // 추정기의 가장 최근 출력
 let shownGaze = null;      // 물방울에 마지막으로 준 좌표. 추정이 잠깐 끊겨도 이 자리를 지킨다
@@ -105,7 +107,8 @@ const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let paceWatch = null;        // 지금 쪽의 읽기 속도·가로 폭 감시 (쪽을 넘기면 새로 만든다)
-let paceShown = false;       // 경고를 쪽마다 한 번만 띄운다
+let paceOn = false;          // 지금 '빠르게 지나가는 중' 표시가 켜져 있는가
+const pacePages = new Map(); // 빠르게 지나간 적이 있는 쪽 → 그때의 최고 속도(자/분). 측정을 멈춘 뒤 문장으로 알린다
 let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
 let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
 const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
@@ -307,8 +310,7 @@ async function showPage(pageId) {
   paceWatch = paceWarn && pdf.mode === 'reflow'
     ? createPaceWatch({ layout: pdf.layout, lineWidths: pageLineBoxes.map((b) => b.textWidth) })
     : null;
-  paceShown = false;
-  setMsg('paceMsg', '', '');
+  setPaceCue(false);
   renderGauge();
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
@@ -363,6 +365,7 @@ async function closeDocument() {
 // ---------- 구간 ----------
 function beginSegment() {
   if (!store || segmentOpen || sealed) return;
+  setMsg('paceMsg', '', '');   // 다시 읽기 시작하면 지난 안내 문장은 치운다 (읽는 동안 화면 위에 글이 있으면 눈이 간다)
   const segmentId = `seg-${++segmentCounter}`;
   segmentStartMs = nowMs();
   store.beginSegment({ pageId: currentPage, segmentId, tMs: segmentStartMs });
@@ -374,6 +377,52 @@ function endSegment(reason) {
   store.endSegment({ tMs: nowMs(), reason });
   segmentOpen = false;
   logAuxScore(currentPage, reason);
+  setPaceCue(false);
+  // 쪽을 넘기는 중이 아니라 측정이 멈춘 것이면, 그제야 문장으로 알린다 (눈이 글에서 떠난 뒤다)
+  if (reason !== 'page_change') showPaceSummary();
+}
+
+/**
+ * '빠르게 지나가는 중' 표시. 읽는 동안에는 새 글자나 상자를 띄우지 않는다 —
+ * 화면 위쪽에 문장이 뜨면 "이게 뭐지" 하고 그리로 눈이 가고, 그 이동이 시선 기록에 섞인다.
+ * 대신 눈이 이미 와 있는 물방울과, 줄을 바꿀 때마다 눈이 닿는 지금 줄 표식의 색만 천천히 바꾼다.
+ */
+function setPaceCue(on) {
+  paceOn = !!on;
+  eyeGlass.setHasty(paceOn);
+  $('readGauge').classList.toggle('is-hasty', paceOn);
+}
+/** 측정이 멈춘 뒤, 빠르게 지나간 쪽을 한 문장으로 알린다. 없으면 지운다. */
+function showPaceSummary() {
+  if (!pacePages.size) { setMsg('paceMsg', '', ''); return; }
+  const pages = [...pacePages.keys()].sort((a, b) => a - b);
+  const top = Math.round(Math.max(...pacePages.values()) / 10) * 10;
+  setMsg('paceMsg', `${pages.join('·')}쪽에서 빠르게 지나간 구간이 있었습니다 (가장 빠를 때 분당 약 ${top}자). `
+    + '읽기 연구에서 보고된 묵독 속도(분당 200~400단어)를 벗어납니다. 점수는 그대로 두고 기록에만 남깁니다.', 'warn');
+}
+
+/**
+ * 읽는 사람이 줄을 골랐다 (지면을 누르거나 ↑/↓). 줄 추적기를 그 줄로 옮긴다.
+ * 읽음을 주는 것이 아니다 — 그 줄을 다시 읽어야 채워진다. 측정 중이고 재배치 쪽일 때만 받는다.
+ * @param {number} k 줄 번호 (0부터)
+ * @param {'click'|'key'} how
+ */
+function selectLine(k, how) {
+  if (!lineProg || !measuring || !segmentOpen || calibration.active || pdf?.mode !== 'reflow') return false;
+  if (!Number.isInteger(k) || k < 0 || k >= pageLineBoxes.length) return false;
+  const step = lineProg.jumpTo(k);
+  if (yLock) eyeGlass.setLine(step.to);
+  const tMs = latestGaze?.tMs ?? null;
+  if (tMs !== null) paceWatch?.step(step, tMs);
+  gazeLog?.meta({ type: 'lineLock', pageId: currentPage, from: step.from, to: step.to, cause: 'manual', how, tMs, atMs: tMs,
+    speed: Math.round(lineProg.speed), yLine: null, yFix, peakX: null, landedX: null });
+  renderGauge();
+  return true;
+}
+/** 지면 위 화면 y가 몇 번째 줄인가. 줄 사이 빈 곳이나 지면 밖이면 −1. */
+function lineAtClientY(clientY) {
+  const top = $('pdfCanvas').getBoundingClientRect().top;
+  return pageLineBoxes.findIndex((b) => clientY >= top + b.top && clientY < top + b.top + b.height);
 }
 
 /** 지금 쪽 글 왼쪽 끝의 화면 x (시선 좌표와 같은 뷰포트 CSS px). 창 크기를 바꾸거나 틀 안에서 가로로 굴리면 바뀐다. */
@@ -435,11 +484,17 @@ function trackLine(g) {
   if (paceWatch) {
     paceWatch.push(sample);
     if (newly.length) paceWatch.credit(newly);
-    // 경고는 쪽마다 한 번만. 한 번 뜨면 쪽을 넘길 때까지 둔다 (깜빡이지 않게)
-    if (!paceShown && paceWatch.status.warn) {
-      paceShown = true;
-      setMsg('paceMsg', paceWatch.message(), 'warn');
-      gazeLog?.meta({ type: 'pace', pageId: currentPage, tMs: g.tMs, ...paceWatch.snapshot() });
+    paceWatch.step(step, g.tMs);
+    // 빨라진 동안만 켜지고 느려지면 꺼진다. 켜지고 꺼지는 순간을 기록에 남긴다.
+    const fast = segmentOpen && paceWatch.fast;
+    if (fast !== paceOn) {
+      setPaceCue(fast);
+      const sn = paceWatch.snapshot();
+      if (fast) pacePages.set(currentPage, Math.max(pacePages.get(currentPage) ?? 0, sn.recentCharsPerMin ?? 0));
+      gazeLog?.meta({ type: 'pace', pageId: currentPage, tMs: g.tMs, state: fast ? 'on' : 'off', ...sn });
+    } else if (fast) {
+      const now = paceWatch.status.recentCharsPerMin ?? 0;
+      if (now > (pacePages.get(currentPage) ?? 0)) pacePages.set(currentPage, now);
     }
   }
   if (step) {
@@ -698,7 +753,10 @@ $('measureToggleBtn').addEventListener('click', async () => {
   measuring = true; if (store?.getPage(currentPage)?.supported && !document.hidden) beginSegment();
   updateMeasureBtn();
 });
-function updateMeasureBtn() { $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개'; }
+function updateMeasureBtn() {
+  $('measureToggleBtn').textContent = measuring ? '측정 일시정지' : '측정 재개';
+  document.body.classList.toggle('is-measuring', measuring);   // 지면의 줄을 누를 수 있다는 표시(커서)에 쓴다
+}
 function updateCamBadge(on) { $('camBadge').innerHTML = `<span class="dot" aria-hidden="true"></span>${on ? '카메라 켜짐' : '카메라 꺼짐'}`; $('camBadge').className = on ? 'is-on' : ''; document.body.classList.toggle('is-live', on); if (!on) eyeGlass.idle(); }
 
 function warnIfPoseDrifted(sample, frame) {
@@ -760,6 +818,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); leaveFocus(); }
   else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(currentPage + 1); }
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(currentPage - 1); }
+  // ↑/↓: 줄 추적기를 한 줄 위·아래로 (다시 읽을 줄 고르기). 눈을 글에서 떼지 않고 쓸 수 있다
+  else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && lineProg && measuring) {
+    e.preventDefault();
+    selectLine(lineProg.line + (e.key === 'ArrowUp' ? -1 : 1), 'key');
+  }
+});
+// 지면의 줄을 누르면 줄 추적기가 그 줄로 간다 (읽음이 안 된 줄을 다시 읽을 때)
+document.querySelector('.page-frame').addEventListener('click', (e) => {
+  if (!measuring || window.getSelection()?.toString()) return;
+  const k = lineAtClientY(e.clientY);
+  if (k >= 0) selectLine(k, 'click');
 });
 $('navFocusExitBtn').addEventListener('click', leaveFocus);
 
@@ -804,7 +873,8 @@ function renderPanel() {
     const attrs = `data-page="${id}" tabindex="0" role="button"${aria}`;   // 누르면 그 쪽으로 이동
     if (!pg) return `<li class="st-unmeasured${cur}" ${attrs} title="${id}쪽으로 이동"><span>${id}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
     const e = pg.evaluation;
-    return `<li class="st-${e.status}${cur}" ${attrs} title="${statusText(e)} · ${id}쪽으로 이동"><span>${id}쪽 · ${statusText(e)}</span><span class="num">${formatScore(e)}</span></li>`;
+    const hasty = pacePages.has(id) ? ' <em class="hasty-tag" title="빠르게 지나간 구간이 있었습니다 (기록 전용, 점수와 무관)">빠름</em>' : '';
+    return `<li class="st-${e.status}${cur}" ${attrs} title="${statusText(e)} · ${id}쪽으로 이동"><span>${id}쪽 · ${statusText(e)}${hasty}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');
   $('signRequestBtn').disabled = !snap.canSign;
   $('navSignBtn').disabled = !snap.canSign;

@@ -212,6 +212,27 @@ test('줄 추적기: 긴 줄에서는 머물러도 넘기지 않고, 마지막 �
   assert.equal(M.line, 1);
 });
 
+test('줄바꿈 계수기 hold: 그 뒤 쉬는 시간 동안은 세지 않고, 지나면 다시 센다', () => {
+  const C = createGazeSweepCounter(OPTS);
+  C.push({ tMs: 0, xPx: 1300, yPx: 500, valid: true });
+  C.hold(40);
+  assert.equal(C.push({ tMs: 80, xPx: 620, yPx: 500, valid: true }), false, '쉬는 중');
+  for (let t = 800; t <= 1200; t += 40) C.push({ tMs: t, xPx: 1300, yPx: 500, valid: true });
+  assert.equal(C.push({ tMs: 1240, xPx: 620, yPx: 540, valid: true }), true, '쉬는 시간이 지나면 센다');
+});
+
+test('줄 추적기 jumpTo: 고른 줄로 옮기고, 머묾 시계도 그 줄부터 다시 잰다', () => {
+  const L = createLineLocker({ lineWidths: [700, 177, 749, 700], layout: LAYOUT, textLeftPx: 600 });
+  feed(L, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 2400, 620)]);
+  assert.equal(L.line, 1);
+  assert.deepEqual(L.jumpTo(3), { from: 1, to: 3, cause: 'manual' });
+  assert.equal(L.line, 3);
+  assert.deepEqual(L.jumpTo(1), { from: 3, to: 1, cause: 'manual' });
+  // 짧은 줄 1로 돌아왔다: 예전에 그 줄에서 보낸 시간이 아니라 지금부터 다시 잰다 → 바로 넘어가지 않는다
+  assert.deepEqual(feed(L, still(2440, 3400, 650)), []);
+  assert.equal(L.line, 1);
+});
+
 test('줄 추적기: 무효 표본은 무시', () => {
   const L = createLineLocker({ lineWidths: [120, 700], layout: LAYOUT, textLeftPx: 600 });
   assert.equal(L.push({ tMs: 0, xPx: 700, valid: false }), null);

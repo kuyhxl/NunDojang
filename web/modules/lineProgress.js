@@ -64,6 +64,7 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
   const span = () => ({ startMs: null, startLine: 0, minX: Infinity, maxX: -Infinity, validMs: 0 });
   let sweepSpan = span(), lineSpan = span();
   let lastValidMs = null, prevValid = false, lastGroup = null;
+  let jumpedTo = null;   // 줄을 손으로 옮겼으면 그 줄 번호. 다음 표본에서 두 구간을 그 자리부터 새로 잡는다
   const restart = (sp, t, x, line) => { sp.startMs = t; sp.startLine = line; sp.validMs = 0; sp.minX = sp.maxX = Number.isFinite(x) ? x : NaN; if (!Number.isFinite(sp.minX)) { sp.minX = Infinity; sp.maxX = -Infinity; } };
   const widen = (sp, x) => { if (Number.isFinite(x)) { sp.minX = Math.min(sp.minX, x); sp.maxX = Math.max(sp.maxX, x); } };
 
@@ -98,6 +99,8 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
     const dt = lastValidMs === null ? 0 : t - lastValidMs;
     if (prevValid && dt > 0 && (maxGapMs === null || dt <= maxGapMs)) { sweepSpan.validMs += dt; lineSpan.validMs += dt; }
     lastValidMs = t; prevValid = true;
+    // 줄을 손으로 옮겼다. 옮기기 전의 시선(다른 줄을 보던 것)이 새 줄의 가로 진행·시간으로 넘어오지 않게 여기서 끊는다.
+    if (jumpedTo !== null) { restart(sweepSpan, t, x, jumpedTo); restart(lineSpan, t, x, jumpedTo); jumpedTo = null; }
     widen(sweepSpan, x); widen(lineSpan, x);
     const step = locker.push(sample);
     if (step?.cause === 'sweep') {
@@ -120,6 +123,16 @@ export function createLineProgress({ lineWidths, layout, textLeftPx, xRatio = LP
 
   return {
     push,
+    /**
+     * 줄을 손으로 골라 그리로 옮긴다. **읽음은 매기지 않는다** — 그 줄을 다시 읽어 시간·가로 진행 조건을 채워야 읽음이 된다.
+     * 이미 읽음인 줄은 그대로 읽음이다. 같은 줄을 골라도 구간은 새로 잡는다(그 줄을 처음부터 다시 읽는다는 뜻).
+     * @returns {{from:number, to:number, cause:'manual'}}
+     */
+    jumpTo(k) {
+      const step = locker.jumpTo(k);
+      jumpedTo = step.to;
+      return step;
+    },
     /** 글 왼쪽 끝이 옮겨졌을 때(창 크기·가로 스크롤) 줄바꿈 착지권을 새 자리로. 읽음·줄 번호는 그대로 둔다 */
     setTextLeft: (px) => locker.setTextLeft(px),
     get line() { return locker.line; },

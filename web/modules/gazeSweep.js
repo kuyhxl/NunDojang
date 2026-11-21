@@ -68,6 +68,12 @@ export function createGazeSweepCounter(options) {
   function reset() { recent = []; lastSweepMs = -Infinity; lastSampleMs = null; count = 0; dropped = 0; last = null; }
 
   /**
+   * 지금부터 refractoryMs 동안 줄바꿈을 세지 않고, 창도 비운다.
+   * 줄을 손으로 골라 옮긴 직후에 쓴다 — 그 줄 처음으로 눈을 옮기는 이동이 줄바꿈으로 세어지면 곧바로 다음 줄로 넘어가 버린다.
+   */
+  function hold(tMs) { if (Number.isFinite(tMs)) { recent = []; lastSweepMs = tMs; } }
+
+  /**
    * 문턱을 갈아 끼운다. 쪽의 관측 가로 범위가 정해진 뒤 한 번 부른다 (xObserve.js).
    * 이미 센 줄바꿈과 지금 창은 건드리지 않는다 — 바뀐 문턱은 **다음 표본부터** 적용된다.
    */
@@ -77,7 +83,7 @@ export function createGazeSweepCounter(options) {
     if (next.minDyPx === null || Number.isFinite(next.minDyPx)) minDyPx = next.minDyPx;
   }
 
-  return { push, reset, setThresholds, get count() { return count; }, get droppedWindows() { return dropped; },
+  return { push, reset, hold, setThresholds, get count() { return count; }, get droppedWindows() { return dropped; },
     get thresholds() { return { minDropPx, landingMaxX, minDyPx, windowMs, refractoryMs, maxGapMs }; },
     get lastSweep() { return last ? { ...last } : null; } };
 }
@@ -219,6 +225,7 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
   let line = 0;
   let enterMs = null;   // 지금 줄에 들어온 시각 (첫 표본에서 정한다)
   let yGapSince = null; // y가 크게 어긋난 상태가 시작된 시각
+  let holdNext = false; // 줄을 손으로 옮긴 직후: 다음 표본에서 계수기를 잠깐 쉬게 한다
 
   /** y로 본 줄 번호. 쓸 수 없으면 null. */
   function yLineOf(sample) {
@@ -240,6 +247,7 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     if (!sample?.valid || !Number.isFinite(sample.tMs)) return null;
     const t = sample.tMs;
     if (enterMs === null) enterMs = t;
+    if (holdNext) { counter.hold(t); holdNext = false; }
     // 관측 창이 이번에 닫히면 문턱을 갈아 끼운다. 이미 센 줄바꿈은 건드리지 않는다.
     if (observer) {
       const obs = observer.push(sample);
@@ -284,8 +292,22 @@ export function createLineLocker({ lineWidths, layout, textLeftPx, dwellMarginMs
     counter.setThresholds(sweepOptionsFor(layout, textLeft, { observedX: lastObs, maxGapMs }));
   }
 
+  /**
+   * 줄을 손으로 골라 옮긴다 (읽는 사람이 그 줄을 눌렀다). 읽은 증거가 아니라 **자리만** 옮기는 것이다.
+   * 왜: 추적기는 앞으로만 간다. 너무 빨리 지나가 읽음이 안 된 줄을 다시 읽어도, 추적기가 이미 아래에 있으면 채워지지 않는다.
+   *     세로 시선으로 그 줄을 알아내는 것은 안 된다 — 오차가 줄 간격보다 크다 (docs/comprehension_evidence.md 9-6·20-7).
+   * @returns {{from:number, to:number, cause:'manual'}}
+   */
+  function jumpTo(k) {
+    const from = line;
+    line = Math.min(Math.max(0, k | 0), last);
+    enterMs = null; yGapSince = null; holdNext = true;
+    return { from, to: line, cause: 'manual' };
+  }
+
   return {
     push,
+    jumpTo,
     setTextLeft,
     get line() { return line; },
     get speed() { return speed(); },

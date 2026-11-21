@@ -90,6 +90,7 @@ button, input, label { font: inherit; }
 .calib-dot:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
 .calib-dot.is-collecting { transform: translate(-50%, -50%) scale(.55); background: radial-gradient(circle, #141414 0 3px, var(--live) 4px); }
 .calib-actions { display: flex; gap: 8px; }
+.calib-done .kbd { margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 12px; color: rgba(20,20,20,.6); background: rgba(20,20,20,.08); }
 .calib-skip { position: fixed; left: 25%; top: 16px; transform: translateX(-50%); }
 .calib-skip[hidden] { display: none; }
 .calib-light { position: fixed; left: 72%; top: 16px; width: min(34vw, 420px); margin: 0; transform: translateX(-50%); text-align: center; font-size: 15px; line-height: 22px; color: #ffb86b; pointer-events: none; }
@@ -250,8 +251,8 @@ body.is-reflow-lg .page-frame { margin-top: 16px; }
 body.is-focus .shell::after { opacity: 1; pointer-events: auto; }
 body.is-focus .page-frame { position: fixed; inset: 0; z-index: 45; margin: auto; width: min(var(--focus-w, 896px), calc(100vw - 32px)); max-width: none; height: fit-content; max-height: calc(100vh - 32px); overflow: hidden; }
 body.is-focus .floatnav { z-index: 60; }
-/* 읽기 모드에서는 문서가 화면을 덮으므로, 속도 경고를 가려지지 않는 자리로 띄운다.
-   측정하는 동안 보이지 않으면 경고의 뜻이 없다 (pace.js). */
+/* 읽기 모드에서는 문서가 화면을 덮으므로, 속도 안내 문장을 가려지지 않는 자리로 띄운다.
+   이 문장은 **측정이 멈춘 뒤에만** 채워진다. 읽는 동안에는 물방울 색으로만 알린다 (app.js setPaceCue). */
 body.is-focus #paceMsg:not(:empty) {
   /* 위쪽 상태 띠(.topline, 12~42px)를 피해 그 아래에 둔다. 겹치면 둘 다 안 읽힌다 */
   position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 70;
@@ -270,6 +271,11 @@ body.is-focus #paceMsg:not(:empty) {
 .read-gauge .tick.is-read { background: #1f9d63; }
 .read-gauge .tick.is-current { box-shadow: 0 0 0 2px rgba(20,20,20,.18); }
 .read-gauge .tick.is-read.is-current { box-shadow: 0 0 0 2px rgba(31,157,99,.3); }
+/* 측정 중에는 지면의 줄을 눌러 줄 추적기를 그 줄로 옮길 수 있다 (다시 읽기). 읽음을 주는 것은 아니다 */
+body.is-measuring.is-reflow .page-frame { cursor: pointer; }
+/* 빠르게 지나가는 중: 지금 줄 표식만 주황으로. 줄을 바꿀 때마다 눈이 닿는 자리다 */
+.read-gauge.is-hasty .tick.is-current, .read-gauge.is-hasty .tick.is-read.is-current { background: #f58a07; box-shadow: 0 0 0 2px rgba(245,138,7,.28); transition: background-color 1.2s ease, box-shadow 1.2s ease; }
+.hasty-tag { margin-left: 6px; padding: 1px 6px; border-radius: 9999px; font-style: normal; font-size: 11px; line-height: 14px; color: #7a4300; background: #ffd9a0; }
 .read-gauge .pass-mark { position: absolute; height: 0; border-top: 1.5px dashed rgba(20,20,20,.3); }
 .read-gauge .pass-mark span { position: absolute; right: 0; top: -7px; padding: 0 6px; font-size: 11px; line-height: 12px; color: rgba(20,20,20,.55); background: #fff; white-space: nowrap; }
 .read-gauge .pass-mark.is-passed { border-top-color: rgba(31,157,99,.6); }
@@ -325,6 +331,12 @@ body.is-empty .nav-link:not(#appVersion) { color: rgba(255,255,255,.6); }
 .drop-glint { position: absolute; left: 18%; top: 12%; width: 34%; height: 12%; border-radius: 9999px; background: rgba(255,255,255,.95); filter: blur(.7px); transform: rotate(-22deg); }
 .drop-glint2 { position: absolute; right: 16%; bottom: 14%; width: 14%; height: 7%; border-radius: 9999px; background: rgba(255,255,255,.7); filter: blur(.8px); transform: rotate(-22deg); }
 .gaze-layer.is-visible .drop { opacity: 1; }
+/* 빠르게 지나가는 중 (pace.js): 물방울에 주황빛이 돈다. 1.2초에 걸쳐 스며든다 —
+   갑자기 나타나는 것은 눈을 끌어가지만 천천히 바뀌는 색은 그렇지 않다. 글자·상자는 띄우지 않는다. */
+.drop::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity 1.2s ease;
+  background: radial-gradient(circle at 50% 55%, rgba(255,159,28,.42) 0%, rgba(255,159,28,.22) 55%, rgba(255,159,28,0) 78%);
+  box-shadow: inset 0 0 0 1.5px rgba(245,138,7,.85), 0 0 14px rgba(255,159,28,.35); }
+.gaze-layer.is-hasty .drop::after { opacity: 1; }
 .gaze-layer.is-fogged .drop { filter: blur(2px); opacity: .3; }
 .gaze-note {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 5px 12px; border-radius: 9999px;

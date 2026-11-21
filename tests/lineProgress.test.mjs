@@ -175,6 +175,63 @@ test('lastGroup이 벽시계·유효 시간·유효 비율을 함께 준다', ()
   assert.ok(g.coverage > 0.9, `끊김이 없으면 유효 비율이 1에 가까워야 한다: ${g.coverage}`);
 });
 
+// ---- 줄을 골라 다시 읽기 (jumpTo)
+test('너무 빨리 지나가 회색으로 남은 줄: 다시 읽어도 추적기가 아래에 있으면 안 채워지고, 그 줄을 고르면 채워진다', () => {
+  const W = [760, 760, 760, 760, 760, 760];
+  // 줄 2만 0.5초에 지나간다 (760px ÷ 800px/s = 0.95초가 필요) → 읽음이 안 된다
+  const fastLine = (t0) => { const o = []; for (let u = 0; u <= 480; u += 40) o.push({ tMs: t0 + u, xPx: LEFT + 608 * (u / 480), yPx: 500, valid: true }); return o; };
+  const a = readLines(W, { to: 2 });
+  const b = fastLine(a.endMs);
+  const c = readLines(W, { from: 3, to: 6, startMs: a.endMs + 520 });
+  const P = run(W, [...a.samples, ...b, ...c.samples]);
+  assert.deepEqual(P.readLines, [0, 1, 3, 4, 5], '줄 2만 회색');
+  assert.equal(P.line, 5);
+
+  // 고르지 않고 줄 2를 다시 읽는다: 추적기는 마지막 줄에 있고, 그 줄은 이미 읽음이라 아무 일도 없다
+  const again = readLines(W, { from: 2, to: 3, startMs: c.endMs + 500 });
+  for (const s of again.samples) P.push(s);
+  assert.deepEqual(P.readLines, [0, 1, 3, 4, 5], '그냥 다시 읽어서는 안 채워진다');
+
+  // 줄 2를 고르고 다시 읽는다
+  const step = P.jumpTo(2);
+  assert.deepEqual(step, { from: 5, to: 2, cause: 'manual' });
+  assert.equal(P.line, 2);
+  assert.deepEqual(P.readLines, [0, 1, 3, 4, 5], '고르는 것만으로는 읽음이 되지 않는다');
+  const redo = readLines(W, { from: 2, to: 3, startMs: again.endMs + 500 });
+  for (const s of redo.samples) P.push(s);
+  assert.deepEqual(P.readLines, [0, 1, 2, 3, 4, 5]);
+});
+
+test('줄을 고르기 전의 시선은 그 줄의 읽음으로 넘어오지 않는다', () => {
+  const W = [760, 760, 760, 760];
+  const P = run(W, readLines(W, { from: 0, to: 1 }).samples.map((s) => ({ ...s, tMs: s.tMs })), {});
+  // 줄 0을 읽던 중(가로 진행·시간이 이미 쌓였다)에 줄 3을 고르고, 한 점만 0.3초 본다
+  P.jumpTo(3);
+  for (let t = 5000; t <= 5300; t += 40) P.push({ tMs: t, xPx: LEFT + 20, yPx: 620, valid: true });
+  assert.ok(!P.readLines.includes(3), `읽음 ${P.readLines.join(',')}`);
+  assert.equal(P.line, 3);
+});
+
+test('줄을 고른 직후 그 줄 처음으로 눈을 옮기는 이동은 줄바꿈으로 세지 않는다', () => {
+  const W = [760, 760, 760, 760, 760];
+  const P = run(W, readLines(W, { to: 4 }).samples);
+  assert.equal(P.line, 3);
+  P.jumpTo(1);
+  // 눌렀을 때 눈은 줄 오른쪽에 있었고(1200), 곧바로 줄 처음(620)으로 간다 — 줄바꿈과 똑같이 생긴 이동이다
+  let t = 60000;
+  for (const x of [1200, 1200, 1190, 620, 620, 620]) { P.push({ tMs: t, xPx: x, yPx: 540, valid: true }); t += 40; }
+  assert.equal(P.line, 1, '고른 줄에 그대로 있어야 한다');
+});
+
+test('jumpTo: 범위를 벗어난 번호는 첫 줄·마지막 줄로 붙이고, 이미 읽은 줄은 그대로 읽음', () => {
+  const W = [760, 760, 760];
+  const P = run(W, readLines(W).samples);
+  const before = P.readLines.length;
+  assert.equal(P.jumpTo(99).to, 2);
+  assert.equal(P.jumpTo(-3).to, 0);
+  assert.equal(P.readLines.length, before);
+});
+
 // ---- 11절: 쪽의 관측 범위로 문턱 갈아 끼우기 (?xwindow=1)
 /** 오른쪽으로 shift만큼 밀리고 gain만큼 눌려 찍히는 독자. 절대 착지권(LEFT+200)에 못 닿는다. */
 function shiftedReader(widths, { shift = 300, gain = 0.7, speed = 250, rounds = 1 } = {}) {

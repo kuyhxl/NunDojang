@@ -92,6 +92,8 @@ export function createEyeGlass(container, { size = 56, stiffness = 120, damping 
     get line() { return lineIndex; },
     /** 줄 안 세로 자리 (0~1). 0.5 가운데(기본), 1 밑선 */
     setLineAnchor(a) { lineAnchor = Math.min(1, Math.max(0, Number(a) || 0)); if (!followsGazeY) target.y = lineY(lineIndex); kick(); },
+    /** 빠르게 지나가는 중이라는 표시 (pace.js). 물방울 색만 천천히 바꾼다 — 눈이 이미 와 있는 자리라 시선을 끌어가지 않는다 */
+    setHasty(on) { container.classList.toggle('is-hasty', !!on); },
     resetLine() { lineIndex = 0; if (!followsGazeY) target.y = lineY(0); kick(); },
     /** @param gaze 보정이 있을 때의 화면 좌표 {x, y|null} (CSS px). 없으면 홍채 x로 대강 표시한다 */
     update(sample, gaze = null) {
