@@ -15,6 +15,7 @@ import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressSc
 import { X_OBSERVE_POLICY } from './modules/xObserve.js';
 import { createPaceWatch } from './modules/pace.js';
 import { createKeySpanWatch } from './modules/keySpans.js';
+import { createGuide } from './modules/guide.js';
 import { createVoiceMeter, VOICE_POLICY } from './modules/voiceMeter.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
@@ -121,6 +122,11 @@ const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let paceWatch = null;        // 지금 쪽의 읽기 속도·가로 폭 감시 (쪽을 넘기면 새로 만든다)
+// 처음 쓰는 사람을 위한 안내 (guide.js). PDF를 열기 전 빈 화면에 놓인다. ?guide=0 → 숨김, ?guide=1 → 접어 두었어도 펴서 시작
+if (urlParams.get('guide') !== '0') {
+  createGuide($('guide'), { marks: keyMarksOn ? (keyVoiceOn ? 'voice' : 'gaze') : null,
+    open: urlParams.get('guide') === '1' ? true : null, reopenHost: $('dropZone'), onStart: () => $('pdfInput').click() });
+}
 let voice = null;            // 마이크 소리 크기 측정 (voiceMeter.js, ?marks=voice). 카메라를 켤 때 함께 켠다
 let keyWatch = null;         // 지금 쪽의 중요 표시 감시 (keySpans.js, ?marks=1). 쪽을 그릴 때마다 새로 만든다
 const keyDone = new Map();   // 쪽 → 채워진 표시 id → {doneAtMs, dwellMs}. 쪽을 넘겼다 돌아와도 남는다
