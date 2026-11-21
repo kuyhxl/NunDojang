@@ -4,9 +4,12 @@ web/vendor/pdfjs/**
 web/vendor/pdf-lib/**
 web/vendor/fonts/**
 web/vendor/tesseract/**
+web/vendor/tfjs/**
 web/models/face_landmarker.task
+web/models/blazegaze/**
 !web/vendor/**/.gitkeep
 !web/models/.gitkeep
+!web/models/**/.gitkeep
 
 # 분석 원자료·대용량
 analysis/data/raw/**

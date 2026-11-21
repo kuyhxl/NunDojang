@@ -1,12 +1,18 @@
-// 시선 추정 수학 — 순수 함수만. DOM·카메라·MediaPipe에 의존하지 않는다.
+// 시선 신호 수학 — 순수 함수만. DOM·카메라·MediaPipe에 의존하지 않는다.
 // 그래서 브라우저 없이 바로 시험할 수 있다:  node tests/gazeMath.test.mjs
+//
+// 2026-11-21부터 **화면 좌표는 여기서 만들지 않는다.** 좌표는 WebEyeTrack의 BlazeGaze 모형이 낸다
+// (webEyeTrackMath.js → blazeGaze.js → gazeModel.js). 능형회귀·기저·초기 이득·중립 수집기는 지웠다.
+// 여기 남은 것은 그 좌표 앞뒤를 받치는 신호 처리다:
+//   - extractGazeFeatures : 깜빡임·품질 판정, 자세 안내, 기록 열(eye_h … roll_deg)에 쓰는 landmark 특징
+//   - One Euro 필터 · 고정 보정 · 깜빡임 가드 · 눈 뜸 기준 · 드리프트 감시기
+//   - solveLinearSystem   : 어파인·호모그래피 풀이가 가져다 쓴다
 //
 // 좌표 약속
 //  - 입력 landmark: MediaPipe FaceLandmarker 정규 좌표 (x,y ∈ [0,1]).
 //  - 영상 좌표계: x는 오른쪽, y는 아래쪽이 +.
 //  - 출력 특징은 전부 "사용자 기준"으로 부호를 맞춘다:
 //      eyeH > 0 = 사용자의 오른쪽(= 화면 x가 큰 쪽),  eyeV > 0 = 아래쪽.
-//  - 출력 시선 좌표는 화면 비율(0~1).
 //
 // ■ 거울상(mirror)에 대하여 — 1차 구현에서 틀렸던 부분
 //   카메라 영상이 좌우 반전되어 들어오는 경우가 있다(드라이버·가상 카메라·설정).
@@ -22,7 +28,7 @@
 //   그래서 머리 자세는 행렬이 아니라 landmark에서 직접 뽑는다(아래 두 대용값). 둘 다 반전에 둔감하다.
 //   행렬 값은 진단용으로만 남긴다.
 
-export const GAZE_MATH_VERSION = 'gaze-math/2.0.0';
+export const GAZE_MATH_VERSION = 'gaze-math/3.0.0';
 
 /** MediaPipe FaceLandmarker(478점) 지표. iris는 468·473(중심), 1은 코끝. */
 export const LM = Object.freeze({
@@ -149,42 +155,6 @@ export function extractGazeFeatures(points, w, h, poseMatrixData = null) {
   };
 }
 
-/** 보정 회귀의 기저. 교차검증으로 이 중 하나를 고른다. */
-export const BASIS = Object.freeze({
-  // 화면 속 얼굴 위치(faceCx/faceCy)는 넣지 않는다. 보정 중에는 거의 움직이지 않아 계수가
-  // 우연한 값으로 커지고, 읽는 동안 몸이 조금만 기울어도 시선이 크게 밀린다.
-  // 실측(2026-11-10 기록): 넣으면 세로가 2~5줄 아래로 밀렸고, 빼면 실제 줄 범위에 들어왔다.
-  // 보정 점끼리의 교차검증은 이 문제를 못 잡는다(보정 뒤에 생기는 자세 변화라서).
-  linear: (f) => [1, f.eyeH, f.eyeV, f.headYaw, f.headPitch],
-  // 눈꺼풀 틈(openness)을 넣은 변종. 눈꺼풀이 홍채를 덮으면 홍채 중심이 아래로 치우쳐
-  // 읽히므로, 눈이 처지면 세로가 아래로 밀린다. 그 몫을 모형이 설명할 수 있게 한다.
-  // 기존 linear를 바꾸지 않고 **후보로만** 넣는다 — 도움이 될 때만 교차검증이 뽑는다.
-  linearLid: (f) => [1, f.eyeH, f.eyeV, f.headYaw, f.headPitch, f.openness],
-  binocular: (f) => [
-    1, f.eyeHL, f.eyeHR, f.eyeVL, f.eyeVR,
-    f.headYaw, f.headPitch, f.faceCx, f.faceCy, f.faceScale
-  ],
-  quadratic: (f) => [
-    1, f.eyeH, f.eyeV, f.headYaw, f.headPitch, f.faceCx, f.faceCy,
-    f.eyeH * f.eyeH, f.eyeV * f.eyeV, f.eyeH * f.eyeV,
-    f.eyeH * f.headYaw, f.eyeV * f.headPitch, f.faceScale
-  ]
-});
-// 단순한 것부터. 교차검증이 비슷하면 앞엣것을 고른다.
-export const BASIS_ORDERS = Object.freeze(['linear', 'linearLid', 'binocular', 'quadratic']);
-
-/** 기저가 읽는 모든 키를 가진 더미. 기저 길이를 세는 데 쓴다. */
-const ZERO_FEATURES = Object.freeze({
-  eyeH: 0, eyeV: 0, eyeHL: 0, eyeHR: 0, eyeVL: 0, eyeVR: 0,
-  headYaw: 0, headPitch: 0, faceCx: 0, faceCy: 0, faceScale: 0, openness: 0
-});
-export const basisLength = (order) => BASIS[order](ZERO_FEATURES).length;
-
-// 보정 중에는 머리가 거의 고정이라 머리·얼굴 위치 특징의 분산이 프레임 잡음과 비슷하다.
-// 그대로 표준화하면 잡음이 큰 가중치로 바뀌어, 읽는 동안 자세가 조금만 달라져도 좌표가 크게 빗나간다.
-// 눈 특징(분산 약 0.03)은 이 하한에 걸리지 않는다. 합성 시험으로 고른 값이며 실측 검증 전이다.
-const MIN_FEATURE_STD = 0.02;
-
 /** 부분 피벗 가우스 소거. 특이행렬이면 null. */
 export function solveLinearSystem(A, b) {
   const n = b.length;
@@ -208,71 +178,6 @@ export function solveLinearSystem(A, b) {
     x[r] = s / M[r][r];
   }
   return x.every(Number.isFinite) ? x : null;
-}
-
-/**
- * 능형회귀. 첫 열은 절편(=1)으로 보고 규제하지 않는다. 열마다 크기가 달라 표준화한 뒤 푼다.
- * @param minStd 표준화에 쓸 표준편차의 하한. 분산이 이보다 작은 열은 그만큼 규제가 세진다.
- */
-export function fitRidge(rows, targets, lambda = 1e-2, minStd = 0) {
-  const n = rows.length;
-  if (!n || n !== targets.length) return null;
-  const p = rows[0].length;
-  if (p < 2 || rows.some((r) => r.length !== p)) return null;
-
-  const mean = new Array(p).fill(0);
-  const std = new Array(p).fill(1);
-  for (let j = 1; j < p; j++) {
-    let s = 0;
-    for (let i = 0; i < n; i++) s += rows[i][j];
-    mean[j] = s / n;
-    let q = 0;
-    for (let i = 0; i < n; i++) { const d = rows[i][j] - mean[j]; q += d * d; }
-    const sd = Math.sqrt(q / n);
-    std[j] = sd > 1e-9 ? Math.max(sd, minStd) : 1;
-  }
-  const Z = rows.map((r) => r.map((v, j) => (j === 0 ? 1 : (v - mean[j]) / std[j])));
-
-  const XtX = Array.from({ length: p }, () => new Array(p).fill(0));
-  const Xty = new Array(p).fill(0);
-  for (let i = 0; i < n; i++) {
-    const r = Z[i], t = targets[i];
-    for (let j = 0; j < p; j++) {
-      Xty[j] += r[j] * t;
-      for (let k = j; k < p; k++) XtX[j][k] += r[j] * r[k];
-    }
-  }
-  for (let j = 0; j < p; j++) for (let k = 0; k < j; k++) XtX[j][k] = XtX[k][j];
-  for (let j = 1; j < p; j++) XtX[j][j] += lambda * n;
-
-  const w = solveLinearSystem(XtX, Xty);
-  return w ? { weights: w, mean, std } : null;
-}
-
-/** fitRidge 결과로 한 행을 예측한다. */
-export function applyRidge(fit, row) {
-  const { weights, mean, std } = fit;
-  let s = weights[0];
-  for (let j = 1; j < weights.length; j++) s += weights[j] * ((row[j] - mean[j]) / std[j]);
-  return s;
-}
-
-/**
- * 보정점 하나에서 모은 표본 중 튀는 것을 버린다.
- * 눈이 아직 옮겨 가는 중이거나, 딴 데를 본 프레임이 섞이면 회귀가 통째로 끌려간다.
- * 중앙값에서 먼 순서로 keep 비율만 남긴다.
- */
-export function trimOutliers(samples, keep = 0.75) {
-  if (samples.length < 6) return samples;
-  const med = (arr) => { const s = [...arr].sort((p, q) => p - q); return s[s.length >> 1]; };
-  const mh = med(samples.map((s) => s.features.eyeH));
-  const mv = med(samples.map((s) => s.features.eyeV));
-  const sh = med(samples.map((s) => Math.abs(s.features.eyeH - mh))) || 1e-6;
-  const sv = med(samples.map((s) => Math.abs(s.features.eyeV - mv))) || 1e-6;
-  const scored = samples.map((s) => ({
-    s, d: Math.hypot((s.features.eyeH - mh) / sh, (s.features.eyeV - mv) / sv)
-  })).sort((p, q) => p.d - q.d);
-  return scored.slice(0, Math.max(4, Math.round(samples.length * keep))).map((x) => x.s);
 }
 
 /**
@@ -435,299 +340,5 @@ export function createDriftMonitor({ keys = ['eyeV', 'eyeH', 'headPitch', 'headY
       return out;
     },
     reset() { anchor = null; buf = []; }
-  };
-}
-
-/** 중립(화면 중앙을 볼 때) 기준값 수집기. 중앙값을 쓰므로 튀는 프레임에 끌리지 않는다. */
-export function createNeutralCollector(minSamples = 24) {
-  const keys = ['eyeH', 'eyeV', 'headYaw', 'headPitch'];
-  let rows = [];
-  return {
-    push(f) { rows.push(keys.map((k) => f[k])); return rows.length; },
-    get count() { return rows.length; },
-    get ready() { return rows.length >= minSamples; },
-    result() {
-      if (!rows.length) return null;
-      const out = {};
-      keys.forEach((k, j) => {
-        const col = rows.map((r) => r[j]).sort((p, q) => p - q);
-        out[k] = col[col.length >> 1];
-      });
-      return out;
-    },
-    reset() { rows = []; }
-  };
-}
-
-// 보정 전에 쓰는 초기 기울기. **사람·화면·거리마다 다른 짐작값이다.**
-// 부호까지 짐작이므로, 빠른 보정(4점)이나 전체 보정(9점)으로 반드시 덮어써야 한다.
-export const DEFAULT_GAINS = Object.freeze({
-  eyeH: 11.0, eyeV: 20.0, headYaw: 1.2, headPitch: 1.2
-});
-
-/** eyeH/eyeV를 흔들면 좌우 눈 값도 함께 흔들리도록 특징을 만든다(기울기 추정용). */
-function perturb(base, key, delta) {
-  const f = { ...base };
-  if (key === 'eyeH') { f.eyeH += delta; f.eyeHL += delta; f.eyeHR += delta; }
-  else if (key === 'eyeV') { f.eyeV += delta; f.eyeVL += delta; f.eyeVR += delta; }
-  else f[key] += delta;
-  return f;
-}
-
-/**
- * 특징 → 화면 비율 좌표 모형.
- * 보정 전: 중립 기준 대비 기울기(초기 이득). 방향만 맞추는 임시 모드다.
- * 보정 후: 능형회귀 가중치. 차수는 교차검증으로 고른다.
- */
-export function createGazeModel({ gains = {} } = {}) {
-  let g = { ...DEFAULT_GAINS, ...gains };
-  let neutral = null;
-  let fitted = null;
-  let previous = null;     // 직전 보정. 새 보정이 더 나쁘면 되돌린다.
-  // 치우침 보정. 보정 뒤 자세가 바뀌거나 눈꺼풀이 처지면 좌표가 통째로 밀린다.
-  // 회귀 모형은 그걸 못 고치므로(보정 당시 자세만 안다) 예측 위에 더하는 상수로 바로잡는다.
-  let offset = { x: 0, y: 0 };
-
-  function predictNorm(f) {
-    if (!f) return null;
-    if (fitted) {
-      const row = BASIS[fitted.order](f);
-      return {
-        x: applyRidge(fitted.x, row) + offset.x,
-        y: applyRidge(fitted.y, row) + offset.y,
-        calibrated: true
-      };
-    }
-    const n = neutral ?? { eyeH: 0, eyeV: 0, headYaw: 0, headPitch: 0 };
-    return {
-      x: 0.5 + g.eyeH * (f.eyeH - n.eyeH) + g.headYaw * (f.headYaw - n.headYaw) + offset.x,
-      y: 0.5 + g.eyeV * (f.eyeV - n.eyeV) + g.headPitch * (f.headPitch - n.headPitch) + offset.y,
-      calibrated: false
-    };
-  }
-
-  function fitOrder(order, samples, lambda) {
-    const rows = samples.map((s) => BASIS[order](s.features));
-    const fx = fitRidge(rows, samples.map((s) => s.nx), lambda, MIN_FEATURE_STD);
-    const fy = fitRidge(rows, samples.map((s) => s.ny), lambda, MIN_FEATURE_STD);
-    return fx && fy ? { order, x: fx, y: fy } : null;
-  }
-
-  /** 보정점 단위 leave-one-out. 한 점을 빼고 맞춘 뒤 그 점을 얼마나 틀리는지 본다. */
-  function looError(order, samples, lambda, width, height) {
-    const ids = [...new Set(samples.map((s) => s.point))];
-    if (ids.length < 4) return null;
-    const errs = [];
-    for (const id of ids) {
-      const train = samples.filter((s) => s.point !== id);
-      const test = samples.filter((s) => s.point === id);
-      const m = fitOrder(order, train, lambda);
-      if (!m) return null;
-      let sx = 0, sy = 0;
-      for (const s of test) {
-        const row = BASIS[order](s.features);
-        sx += applyRidge(m.x, row);
-        sy += applyRidge(m.y, row);
-      }
-      const px = (sx / test.length - test[0].nx) * width;
-      const py = (sy / test.length - test[0].ny) * height;
-      errs.push({ point: id, errPx: Math.hypot(px, py), dxPx: px, dyPx: py });
-    }
-    return {
-      rmsPx: Math.sqrt(errs.reduce((s, e) => s + e.errPx * e.errPx, 0) / errs.length),
-      perPoint: errs
-    };
-  }
-
-  /**
-   * 맞춘 모형에서 "보정 전 모드"가 쓸 기울기와 중립을 되뽑는다.
-   * 보정을 한 번 하면 그 뒤로는 초기 짐작값 대신 실제로 측정된 부호·크기를 쓰게 된다.
-   */
-  function learnGainsFrom(model, samples) {
-    const keys = ['eyeH', 'eyeV', 'headYaw', 'headPitch'];
-    const avg = {};
-    for (const k of [...keys, 'eyeHL', 'eyeHR', 'eyeVL', 'eyeVR', 'faceCx', 'faceCy', 'faceScale']) {
-      avg[k] = samples.reduce((s, x) => s + (x.features[k] ?? 0), 0) / samples.length;
-    }
-    const at = (f) => {
-      const row = BASIS[model.order](f);
-      return { x: applyRidge(model.x, row), y: applyRidge(model.y, row) };
-    };
-    const spread = (k) => {
-      const vals = samples.map((s) => s.features[k]);
-      return Math.max(1e-4, (Math.max(...vals) - Math.min(...vals)) / 4);
-    };
-    const slope = {};
-    for (const k of keys) {
-      const d = spread(k);
-      const hi = at(perturb(avg, k, d)), lo = at(perturb(avg, k, -d));
-      slope[k] = { x: (hi.x - lo.x) / (2 * d), y: (hi.y - lo.y) / (2 * d) };
-    }
-    const next = {
-      eyeH: slope.eyeH.x, eyeV: slope.eyeV.y,
-      headYaw: slope.headYaw.x, headPitch: slope.headPitch.y
-    };
-    if (Object.values(next).every(Number.isFinite)) {
-      g = { ...g, ...next };
-      neutral = { eyeH: avg.eyeH, eyeV: avg.eyeV, headYaw: avg.headYaw, headPitch: avg.headPitch };
-    }
-    return { ...next };
-  }
-
-  return {
-    setNeutral(n) { neutral = n ? { ...n } : null; },
-    getNeutral() { return neutral ? { ...neutral } : null; },
-
-    // ── 치우침 보정 (드리프트) ──
-    getOffset() { return { ...offset }; },
-    clearOffset() { offset = { x: 0, y: 0 }; },
-    /** 예측이 (nx,ny)를 가리키도록 치우침을 더한다. maxOffset을 넘지 않게 묶는다. */
-    anchorTo({ predictedX, predictedY, nx, ny, maxOffset = 0.35 }) {
-      if (![predictedX, predictedY, nx, ny].every(Number.isFinite)) {
-        return { ok: false, reason: 'bad_input' };
-      }
-      const next = {
-        x: clamp(offset.x + (nx - predictedX), -maxOffset, maxOffset),
-        y: clamp(offset.y + (ny - predictedY), -maxOffset, maxOffset)
-      };
-      const want = { x: offset.x + (nx - predictedX), y: offset.y + (ny - predictedY) };
-      const clamped = Math.abs(want.x) > maxOffset + 1e-9 || Math.abs(want.y) > maxOffset + 1e-9;
-      const moved = { x: next.x - offset.x, y: next.y - offset.y };
-      offset = next;
-      return { ok: true, offset: { ...offset }, moved, clamped };
-    },
-    /** 자동 드리프트 보정이 조금씩 미는 용도. 한 번에 step 이상 움직이지 않는다. */
-    nudgeOffset(dx, dy, { step = 0.01, maxOffset = 0.35 } = {}) {
-      const lim = (v) => clamp(v, -step, step);
-      offset = {
-        x: clamp(offset.x + lim(dx), -maxOffset, maxOffset),
-        y: clamp(offset.y + lim(dy), -maxOffset, maxOffset)
-      };
-      return { ...offset };
-    },
-
-    setGains(next) { g = { ...g, ...next }; },
-    getGains() { return { ...g }; },
-    flip(axis) {
-      if (axis === 'x') { g.eyeH = -g.eyeH; g.headYaw = -g.headYaw; }
-      else { g.eyeV = -g.eyeV; g.headPitch = -g.headPitch; }
-      return { ...g };
-    },
-    get calibrated() { return !!fitted; },
-    getFit() { return fitted ? { order: fitted.order, stats: { ...fitted.stats } } : null; },
-    get hasPrevious() { return !!previous; },
-    /** 방금 한 보정이 더 나쁘면 직전 보정으로 되돌린다. */
-    restorePrevious() {
-      if (!previous) return { ok: false, reason: 'no_previous' };
-      const swap = fitted;
-      fitted = previous;
-      previous = swap;
-      return { ok: true, order: fitted.order, stats: { ...fitted.stats } };
-    },
-    clearFit() { previous = fitted; fitted = null; },
-    predictNorm,
-
-    /**
-     * 두 점(또는 네 점)만으로 부호와 크기를 직접 재서 초기 이득을 정한다.
-     * 회귀가 아니라 기울기 측정이다. 짐작값을 실제 측정으로 바꾸는 게 목적.
-     * @param pairs [{ features, nx, ny }] — 각 목표점의 대표 특징(중앙값)
-     */
-    fitGainsFromSpan(pairs) {
-      if (!Array.isArray(pairs) || pairs.length < 2) return { ok: false, reason: 'need_2_points' };
-      const pick = (sel) => pairs.map(sel);
-      const spanX = Math.max(...pick((p) => p.nx)) - Math.min(...pick((p) => p.nx));
-      const spanY = Math.max(...pick((p) => p.ny)) - Math.min(...pick((p) => p.ny));
-      const slope = (fk, tk, span) => {
-        if (span < 0.2) return null;
-        const xs = pairs.map((p) => p.features[fk]);
-        const ts = pairs.map((p) => p[tk]);
-        const mx = xs.reduce((s, v) => s + v, 0) / xs.length;
-        const mt = ts.reduce((s, v) => s + v, 0) / ts.length;
-        let num = 0, den = 0;
-        for (let i = 0; i < xs.length; i++) { num += (xs[i] - mx) * (ts[i] - mt); den += (xs[i] - mx) ** 2; }
-        return den > 1e-12 ? num / den : null;
-      };
-      const gx = slope('eyeH', 'nx', spanX);
-      const gy = slope('eyeV', 'ny', spanY);
-      const out = {};
-      // 머리는 눈과 같은 방향으로 거들게만 둔다. 부호가 어긋나 서로 싸우는 걸 막는다.
-      if (Number.isFinite(gx) && Math.abs(gx) > 0.5) { out.eyeH = gx; out.headYaw = Math.sign(gx) * 1.2; }
-      if (Number.isFinite(gy) && Math.abs(gy) > 0.5) { out.eyeV = gy; out.headPitch = Math.sign(gy) * 1.2; }
-      if (!Object.keys(out).length) return { ok: false, reason: 'no_usable_span' };
-      g = { ...g, ...out };
-      const mean = (k) => pairs.reduce((s, p) => s + p.features[k], 0) / pairs.length;
-      neutral = {
-        eyeH: mean('eyeH') - (0.5 - pairs.reduce((s, p) => s + p.nx, 0) / pairs.length) / (out.eyeH ?? 1),
-        eyeV: mean('eyeV') - (0.5 - pairs.reduce((s, p) => s + p.ny, 0) / pairs.length) / (out.eyeV ?? 1),
-        headYaw: mean('headYaw'),
-        headPitch: mean('headPitch')
-      };
-      return { ok: true, gains: { ...g }, measured: { eyeHSlope: gx, eyeVSlope: gy } };
-    },
-
-    /**
-     * 보정 표본으로 모형을 맞춘다.
-     * @param samples [{features, nx, ny, point}] — nx,ny는 화면 비율(0~1) 목표
-     */
-    fit(samples, {
-      width = 1, height = 1, lambda = 1e-2, trim = 0.75,
-      selectionMargin = 0.15, selectionMarginPx = 1, orders = BASIS_ORDERS
-    } = {}) {
-      const clean = (samples ?? []).filter((s) => s && s.features &&
-        [s.nx, s.ny].every((v) => Number.isFinite(v)) && Number.isFinite(s.point));
-      const points = [...new Set(clean.map((s) => s.point))];
-      if (points.length < 4) return { ok: false, reason: 'need_at_least_4_points', points: points.length };
-
-      // 점마다 튀는 표본을 버린다 (눈이 옮겨 가는 중이거나 딴 데를 본 프레임)
-      const usable = points.flatMap((id) => trimOutliers(clean.filter((s) => s.point === id), trim));
-
-      const candidates = [];
-      for (const order of orders) {
-        if (usable.length < basisLength(order) * 3) continue;
-        const loo = looError(order, usable, lambda, width, height);
-        const model = fitOrder(order, usable, lambda);
-        if (loo && model) candidates.push({ order, loo, model });
-      }
-      if (!candidates.length) return { ok: false, reason: 'not_enough_samples', samples: usable.length };
-
-      // 교차검증 오차가 가장 작은 것을 그냥 집으면, 보정점이 많아질수록
-      // 복잡한 기저가 '운으로' 이겨 실제로는 더 나빠진다(선택 자체의 과적합).
-      // 그래서 최저값에서 margin 안에 드는 것 중 **가장 단순한** 기저를 고른다.
-      candidates.sort((a, b) => a.loo.rmsPx - b.loo.rmsPx);
-      // 비율만 쓰면 최저 오차가 0에 가까울 때 여유가 사라진다(0 × 1.15 = 0).
-      // 1px 아래 차이는 뜻이 없으므로 절대 여유도 함께 둔다.
-      const floor = candidates[0].loo.rmsPx;
-      const threshold = floor * (1 + selectionMargin) + selectionMarginPx;
-      const within = candidates.filter((c) => c.loo.rmsPx <= threshold);
-      within.sort((a, b) => BASIS_ORDERS.indexOf(a.order) - BASIS_ORDERS.indexOf(b.order));
-      const best = within[0];
-
-      let se = 0;
-      for (const s of usable) {
-        const row = BASIS[best.order](s.features);
-        const ex = (applyRidge(best.model.x, row) - s.nx) * width;
-        const ey = (applyRidge(best.model.y, row) - s.ny) * height;
-        se += ex * ex + ey * ey;
-      }
-      const learnedGains = learnGainsFrom(best.model, usable);
-      const stats = {
-        order: best.order,
-        samples: usable.length,
-        dropped: clean.length - usable.length,
-        points: points.length,
-        trainRmsPx: Math.sqrt(se / usable.length),
-        looRmsPx: best.loo.rmsPx,
-        perPoint: best.loo.perPoint,
-        considered: candidates.map((c) => ({ order: c.order, looRmsPx: c.loo.rmsPx })),
-        bestLooRmsPx: floor,
-        selectionMargin,
-        selectionMarginPx,
-        learnedGains,
-        fittedAt: Date.now()
-      };
-      previous = fitted;                 // 더 나빠졌으면 되돌릴 수 있게 한 벌 남긴다
-      fitted = { order: best.order, x: best.model.x, y: best.model.y, stats };
-      return { ok: true, ...stats };
-    }
   };
 }

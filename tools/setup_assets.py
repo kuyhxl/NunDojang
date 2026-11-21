@@ -8,6 +8,7 @@
 unpkg/jsdelivr의 실제 파일 경로가 버전에 따라 다를 수 있다 — 실패하면 아래 표의 URL을 브라우저로 열어 수동으로 받고 같은 위치에 둔다.
 """
 import argparse
+import hashlib
 import os
 import sys
 import urllib.request
@@ -21,6 +22,11 @@ PDFLIB_VER = "1.17.1"
 TESSERACT_VER = "5.1.1"        # tesseract.js (본체·일꾼)
 TESSERACT_CORE_VER = "5.1.1"   # tesseract.js-core (wasm). lstm판만 받는다 (엔진 1 = LSTM 전용)
 TESSDATA_VER = "4.0.0"         # 인식 데이터
+TFJS_VER = "4.22.0"            # 시선 모형(BlazeGaze)을 돌린다
+# WebEyeTrack(MIT)의 고정 커밋. 코드는 web/modules/webEyeTrackMath.js 로 옮겨 적었고, 여기서는 가중치만 받는다.
+# 가중치는 표기가 MIT지만 학습 데이터가 비상업 조건이다 — web/vendor/NOTICE.md "BlazeGaze 가중치" 절.
+WEBEYETRACK_COMMIT = "75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c"
+WEBEYETRACK_RAW = f"https://raw.githubusercontent.com/RedForestAI/WebEyeTrack/{WEBEYETRACK_COMMIT}"
 
 ASSETS = [
     # (저장 경로, URL)
@@ -42,7 +48,22 @@ ASSETS = [
      f"https://cdn.jsdelivr.net/npm/pdfjs-dist@{PDFJS_VER}/build/pdf.worker.mjs"),
     ("vendor/pdf-lib/pdf-lib.esm.min.js",
      f"https://cdn.jsdelivr.net/npm/pdf-lib@{PDFLIB_VER}/dist/pdf-lib.esm.min.js"),
+    # 시선 추정 (2026-11-21, MediaPipe 뒤 단계를 WebEyeTrack의 BlazeGaze로 교체). 없으면 시선 추적이 켜지지 않는다.
+    ("vendor/tfjs/tf.fesm.min.js",
+     f"https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@{TFJS_VER}/dist/tf.fesm.min.js"),
+    ("models/blazegaze/model.json",
+     f"{WEBEYETRACK_RAW}/js/examples/minimal-example/public/web/model.json"),
+    ("models/blazegaze/group1-shard1of1.bin",
+     f"{WEBEYETRACK_RAW}/js/examples/minimal-example/public/web/group1-shard1of1.bin"),
 ]
+
+# 받은 파일이 기대한 것과 같은지 본다 (SHA-256). 모형 가중치와 그것을 돌리는 코드는 조용히 바뀌면 안 된다.
+# 가중치 두 값은 A가 측정 시제품(v7.8)에서 따로 적어 둔 값과 같다 (review/ASSETS.json).
+SHA256 = {
+    "vendor/tfjs/tf.fesm.min.js": "d04eb25983352ee850046cf8079a864f4fe0284fb0b3aa409a9f9c8ae668cdac",
+    "models/blazegaze/model.json": "a214f074ccd4724cf4ebf008814a05485e7eaa5faf5aaeb85e66b24a1af55688",
+    "models/blazegaze/group1-shard1of1.bin": "c030a762a2d21ac0f3c59700a723b2d8790f2003b3f8e72fbe31129fcb234e58",
+}
 
 # 사진·스캔 PDF 글자 인식 (Apache-2.0). 받지 않으면 이미지 PDF를 열 때 안내만 뜨고 나머지는 그대로 동작한다.
 # 용량이 크다 (합계 약 29MB): core 2개 약 7.9MB + kor 7.0MB + eng 10.9MB.
@@ -78,13 +99,30 @@ LICENSES = [
     ("vendor/fonts/LICENSE",
      "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE"),
     ("vendor/tesseract/LICENSE", "https://www.apache.org/licenses/LICENSE-2.0.txt"),
+    ("vendor/tfjs/LICENSE", "https://www.apache.org/licenses/LICENSE-2.0.txt"),
+    ("models/blazegaze/LICENSE", f"{WEBEYETRACK_RAW}/LICENSE"),
 ]
+
+
+def sha256_ok(rel, dst):
+    """기대 해시가 적힌 파일이면 맞는지 본다. 적히지 않은 파일은 그대로 통과."""
+    want = SHA256.get(rel)
+    if not want:
+        return True
+    h = hashlib.sha256()
+    with open(dst, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest() == want
 
 
 def fetch(rel, url):
     dst = os.path.join(WEB, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.exists(dst) and os.path.getsize(dst) > 0:
+        if not sha256_ok(rel, dst):
+            print(f"  [실패] 이미 있는 파일의 해시가 다릅니다 (지우고 다시 받으세요): {rel}")
+            return False
         print(f"  있음   {rel}")
         return True
     print(f"  받는 중 {rel}\n          {url}")
@@ -98,6 +136,10 @@ def fetch(rel, url):
         if b"<!doctype html" in head or b"<html" in head:
             os.remove(dst)
             print(f"  [실패] HTML이 내려왔습니다 (경로가 바뀐 듯): {rel}")
+            return False
+        if not sha256_ok(rel, dst):
+            os.remove(dst)
+            print(f"  [실패] 받은 파일의 해시가 기대와 다릅니다: {rel}")
             return False
         print(f"  완료   {rel} ({os.path.getsize(dst) // 1024} KB)")
         return True

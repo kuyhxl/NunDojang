@@ -2,7 +2,7 @@
 // 합성 시선으로 "수식이 의도한 대로 동작하는가"만 본다. 실제 사람 눈으로 검증한 값이 아니다.
 
 import assert from 'node:assert/strict';
-import { createGazeSweepCounter, sweepOptionsFor, nextLineAfterSweep, createLineLocker } from '../web/modules/gazeSweep.js';
+import { createGazeSweepCounter, sweepOptionsFor, nextLineAfterSweep, createLineLocker, SWEEP_UP_JUMP_PX } from '../web/modules/gazeSweep.js';
 import { expectedDetectableSweeps, auxScore, expectedReturnSweeps, AUX_WEIGHT_RAMP } from '../web/modules/pageScoring.js';
 
 const LAYOUT = { columnPx: 800, lineHeightPx: 40 };
@@ -36,8 +36,11 @@ function countAll(samples, opts = OPTS) {
   return c.count;
 }
 
-test('sweepOptionsFor: 이동 152px, 착지 ≤ 글 왼쪽+200px, 위로 40px 넘게 튀면 제외 (800px 단)', () => {
-  assert.deepEqual(OPTS, { minDropPx: 152, landingMaxX: 800, minDyPx: -40, maxGapMs: null });
+test('sweepOptionsFor: 이동 152px, 착지 ≤ 글 왼쪽+200px, 위로 240px 넘게 튀면 제외 (800px 단)', () => {
+  // 위로 튐 허용은 줄 간격이 아니라 엔진의 세로 흔들림 크기다 (SWEEP_UP_JUMP_PX, 2026-11-21)
+  assert.deepEqual(OPTS, { minDropPx: 152, landingMaxX: 800, minDyPx: -SWEEP_UP_JUMP_PX, maxGapMs: null });
+  assert.equal(SWEEP_UP_JUMP_PX, 240);
+  assert.equal(sweepOptionsFor({ columnPx: 520, lineHeightPx: 26 }, 0).minDyPx, -240);   // 13px판도 같은 px
   assert.equal(sweepOptionsFor({ columnPx: 520, lineHeightPx: 26 }, 0).minDropPx, 99);
   assert.equal(sweepOptionsFor(LAYOUT, NaN).landingMaxX, null);
   assert.equal(sweepOptionsFor(LAYOUT, 600, { maxGapMs: 250 }).maxGapMs, 250);   // 줄 때만 끊김을 본다
@@ -97,6 +100,14 @@ test('위로 크게 튀며 왼쪽으로 가면(버튼·다른 곳) 세지 않고
   assert.equal(countAll(noY), 1);
 });
 
+test('줄바꿈 순간 세로가 위로 150px 튀어도 센다 (새 엔진의 세로 흔들림), 300px 튀면 세지 않는다', () => {
+  // 기록 20261121-182650 3쪽 168.8초: 1161 → 393px로 돌아오는 진짜 줄바꿈인데 세로가 −80px 튀어 한 줄 기준에 걸렸다
+  const jitter = [{ tMs: 0, xPx: 1161, yPx: 430, valid: true }, { tMs: 80, xPx: 650, yPx: 280, valid: true }];
+  assert.equal(countAll(jitter), 1);
+  const away = [{ tMs: 0, xPx: 1161, yPx: 630, valid: true }, { tMs: 80, xPx: 650, yPx: 330, valid: true }];
+  assert.equal(countAll(away), 0);
+});
+
 test('expectedDetectableSweeps: 앞줄 폭으로 가중 (152px 미만 0, 352px 이상 1), 마지막 줄 제외', () => {
   assert.deepEqual([...AUX_WEIGHT_RAMP], [0.19, 0.44]);
   assert.equal(expectedDetectableSweeps([800, 800, 800], 800), 2);
@@ -141,6 +152,26 @@ test('nextLineAfterSweep: 남은 줄이 모두 짧으면 한 줄만, 빈 쪽은 
   assert.equal(nextLineAfterSweep(9, [700, 700], 800), 1);
 });
 
+test('nextLineAfterSweep: 어디까지 갔다 왔는지(reachPx)를 주면 짧은 줄 자신의 줄바꿈은 한 줄만 넘긴다', () => {
+  const w = [596, 177, 768, 723];   // 기록 20261121-182650 3쪽의 앞 네 줄
+  assert.equal(nextLineAfterSweep(1, w, 800, undefined, 167), 2);   // 177px 줄 끝(167)까지만 갔다 → 그 줄의 줄바꿈
+  assert.equal(nextLineAfterSweep(1, w, 800, undefined, 700), 3);   // 768px 줄 끝 근처까지 갔다 → 긴 줄을 끝냄
+  assert.equal(nextLineAfterSweep(1, w, 800), 3);                    // 안 주면 옛 동작
+  assert.equal(nextLineAfterSweep(1, w, 800, undefined, NaN), 3);
+  assert.equal(nextLineAfterSweep(0, w, 800, undefined, 50), 1);    // 긴 줄에 있을 때는 reach와 상관없이 한 줄
+});
+
+test('nextLineAfterSweep: 경계는 두 폭의 기하평균 — 시선 x가 눌리거나 늘어 찍혀도 같은 판정', () => {
+  const w = [700, 138, 404, 530];   // 경계 √(138×404) ≈ 236
+  for (const gain of [0.67, 0.8, 1.0, 1.2]) {
+    assert.equal(nextLineAfterSweep(1, w, 800, undefined, 138 * gain), 2, `짧은 줄, 배율 ${gain}`);
+    assert.equal(nextLineAfterSweep(1, w, 800, undefined, 404 * gain), 3, `긴 줄, 배율 ${gain}`);
+  }
+  // 짧은 줄이 둘 이어지면 그중 긴 쪽이 기준이다
+  assert.equal(nextLineAfterSweep(1, [700, 90, 150, 700, 600], 800, undefined, 140), 2);
+  assert.equal(nextLineAfterSweep(1, [700, 90, 150, 700, 600], 800, undefined, 600), 4);
+});
+
 /** 시선 표본 넣기 도우미: [시각ms, x] 목록 → 줄이 바뀐 기록 */
 function feed(locker, pts) { const out = []; for (const [t, x] of pts) { const r = locker.push({ tMs: t, xPx: x, yPx: 500, valid: true }); if (r) out.push(r); } return out; }
 const still = (t0, t1, x) => { const a = []; for (let t = t0; t <= t1; t += 40) a.push([t, x]); return a; };
@@ -161,6 +192,17 @@ test('줄 추적기: 짧은 줄에 오래 머물면 다음 줄로 (끝에서 두
   assert.equal(L.line, 2);
 });
 
+test('줄 추적기: 짧은 줄 끝에서 돌아오면 다음 줄로만 간다 (아직 안 읽은 긴 줄을 건너뛰지 않는다)', () => {
+  // 글 왼쪽 600. 줄 0(700px)을 읽고 돌아와, 줄 1(177px)을 끝(780)까지 읽고 돌아온다 → 줄 2에 있어야 한다
+  const L = createLineLocker({ lineWidths: [700, 177, 749, 700], layout: LAYOUT, textLeftPx: 600 });
+  const steps = feed(L, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 2600, 620), ...still(2640, 3000, 780), [3040, 610]]);
+  assert.deepEqual(steps.map((s) => [s.from, s.to, s.cause]), [[0, 1, 'sweep'], [1, 2, 'sweep']]);
+  // 같은 자리에서 줄 2의 끝(1300)까지 갔다 돌아왔다면 짧은 줄의 줄바꿈은 놓쳤고 긴 줄을 끝낸 것이다 → 줄 3
+  const M = createLineLocker({ lineWidths: [700, 177, 749, 700], layout: LAYOUT, textLeftPx: 600 });
+  const far = feed(M, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 2600, 620), ...still(2640, 3000, 1300), [3040, 610]]);
+  assert.deepEqual(far.map((s) => [s.from, s.to, s.cause]), [[0, 1, 'sweep'], [1, 3, 'sweep']]);
+});
+
 test('줄 추적기: 긴 줄에서는 머물러도 넘기지 않고, 마지막 줄을 넘지 않는다', () => {
   const L = createLineLocker({ lineWidths: [700, 700], layout: LAYOUT, textLeftPx: 600 });
   assert.deepEqual(feed(L, still(0, 20000, 900)), []);
@@ -168,6 +210,27 @@ test('줄 추적기: 긴 줄에서는 머물러도 넘기지 않고, 마지막 �
   const steps = feed(M, still(0, 20000, 700));
   assert.deepEqual(steps.map((s) => s.to), [1]);
   assert.equal(M.line, 1);
+});
+
+test('줄바꿈 계수기 hold: 그 뒤 쉬는 시간 동안은 세지 않고, 지나면 다시 센다', () => {
+  const C = createGazeSweepCounter(OPTS);
+  C.push({ tMs: 0, xPx: 1300, yPx: 500, valid: true });
+  C.hold(40);
+  assert.equal(C.push({ tMs: 80, xPx: 620, yPx: 500, valid: true }), false, '쉬는 중');
+  for (let t = 800; t <= 1200; t += 40) C.push({ tMs: t, xPx: 1300, yPx: 500, valid: true });
+  assert.equal(C.push({ tMs: 1240, xPx: 620, yPx: 540, valid: true }), true, '쉬는 시간이 지나면 센다');
+});
+
+test('줄 추적기 jumpTo: 고른 줄로 옮기고, 머묾 시계도 그 줄부터 다시 잰다', () => {
+  const L = createLineLocker({ lineWidths: [700, 177, 749, 700], layout: LAYOUT, textLeftPx: 600 });
+  feed(L, [...still(0, 2000, 1250), [2040, 620], ...still(2080, 2400, 620)]);
+  assert.equal(L.line, 1);
+  assert.deepEqual(L.jumpTo(3), { from: 1, to: 3, cause: 'manual' });
+  assert.equal(L.line, 3);
+  assert.deepEqual(L.jumpTo(1), { from: 3, to: 1, cause: 'manual' });
+  // 짧은 줄 1로 돌아왔다: 예전에 그 줄에서 보낸 시간이 아니라 지금부터 다시 잰다 → 바로 넘어가지 않는다
+  assert.deepEqual(feed(L, still(2440, 3400, 650)), []);
+  assert.equal(L.line, 1);
 });
 
 test('줄 추적기: 무효 표본은 무시', () => {

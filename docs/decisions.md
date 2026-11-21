@@ -15,6 +15,8 @@ C(황찬혁)가 취합한다. 계약·경로·점수 정책·라이브러리 버
 | 2026-11-17 | **GPL 계열 구성요소는 제품에 넣지 않는다.** 외부 구성요소는 허용적 라이선스(Apache-2.0·MIT·OFL)만 쓴다. ~~WebEyeTrack(GPL-3.0)을 쓰는~~ A의 측정 시제품([PR #14](https://github.com/kuyhxl/NunDojang/pull/14))은 이 저장소 밖에서 연구·비교용으로만 둔다 | GPL-3.0은 전염성이라 묶어서 배포하면 눈도장 전체를 GPL-3.0으로 공개해야 한다. 시제품의 **방법**을 읽고 다시 구현하는 것은 제한받지 않는다 | C: `web/vendor/NOTICE.md` 추가, `setup_assets.py`가 라이선스 원문도 받음, `docs/dependencies.md`에 라이선스 열. A: PR #14은 머지하지 않고 열어 둠. **2026-11-18 정정: WebEyeTrack은 MIT다 — 아래 행 참고. 원칙은 유지하되 사례는 틀렸다** |
 | 2026-11-18 | **시선 로그에 `roll_deg` 열을 더한다.** 고개 기울기(두 눈 바깥 꼬리를 잇는 선의 각도). 기록만 하고 **점수·모형·화면은 그대로다** | 지금 `rollDeg`는 보정 관문(6도 초과 시 거부)에만 쓰고 계산에는 안 들어간다. 기록에도 없어서, 이미 받은 28개로는 "그때 고개가 기울어서 틀렸나"를 물어볼 수조차 없다. 영상을 안 남기므로 되살릴 수도 없다. WebEyeTrack은 roll을 포함한 3D 자세를 모형에 넣는데(18-4절) 쓸지 말지 판단하려면 자료가 먼저다 | C: `web/modules/gazeLog.js` 한 줄. 열은 **맨 뒤**에 붙는다. **B: `analysis/src/load_app_logs.py`는 이름으로 읽고 없는 열만 검사하므로 깨지지 않는다** — 확인함. 쓸지 말지는 아직 정하지 않았다. 기록부터 모은다 |
 | 2026-11-18 | **정정 — WebEyeTrack은 GPL-3.0이 아니라 MIT다.** 11-17 결정의 사례 부분을 철회한다. 원칙(GPL 계열은 제품에 안 넣는다)은 그대로 둔다. PR #14을 머지하지 않는 판단도 그대로 — 사유는 라이선스가 아니라 계약 불일치·범위·벤더 비중이다 | 상류 저장소 현재 main과 A가 고정한 커밋 `75fbd2f`의 `LICENSE`가 모두 MIT 원문이고, A가 사본(`review/LICENSE-WebEyeTrack-MIT.txt`)까지 보관해 두었다. 번들 worker의 법적 고지는 Apache-2.0 1078건(전부 TensorFlow.js)이고 GPL은 0건이다. GPL 표기는 A가 직접 쓴 `core/math.mjs`·`core/viewport.mjs` 두 파일에만 있으며, **눈도장 자체를 GPL로 본** 표기다 | C: 12-1절 정정, 이 표, `web/vendor/NOTICE.md` 수정. **남은 확인거리** — (1) BlazeGaze 가중치·학습 데이터 조건은 아직 안 봤다 (2) 우리 저장소에 `LICENSE` 파일이 없다. 팀이 정해야 한다. 근거: [comprehension_evidence.md 18절](comprehension_evidence.md) |
+| 2026-11-21 | **시선 추정의 landmark 뒤 단계를 WebEyeTrack(BlazeGaze)으로 교체한다.** MediaPipe FaceLandmarker는 그대로 쓰고 머리 자세 행렬 출력만 켠다. 홍채 숫자 4개의 능형회귀(기저·초기 이득·중립 기준)를 지우고, 눈 영상 조각 → BlazeGaze → 어파인 보정으로 바꾼다. `onGaze` 출력 모양·27점 보정 화면·시선 로그 열·점수 수식은 **그대로다** (`gaze-tracker/2.0.0`) | C 결정. [조사 기록 18-5절](comprehension_evidence.md)의 비교 측정(같은 자리에서 두 엔진의 보정 오차)은 **하지 않고** 결정했다 — 정확도가 나아졌는지는 아직 모른다. 확인한 것은 "옮겨 적은 식이 원본과 같은 숫자를 내는가"뿐이다 (조사 기록 20절) | **모두**: `python3 tools/setup_assets.py`를 다시 돌려 새 자산을 받는다 (TensorFlow.js 1.1MB, 가중치 670KB). **C**: `gazeTracker.js`·`gazeMath.js` 고침, `webEyeTrackMath.js`·`gazeModel.js`·`blazeGaze.js` 추가. **A**: `eyeTracker.js`·Sample 계약은 그대로. **B**: 로그 열 이름·순서 그대로라 loader는 안 깨진다. 다만 `x_px`·`y_px`·`raw_x`·`raw_y`를 내는 엔진이 달라졌으므로 11-21 이전 기록과 섞어 통계를 내면 안 된다. **다시 봐야 하는 것**: 기존 기록 28개·훑기 대조군 3개와 그 위에서 정한 문턱(`LP_X_RATIO` 0.4, 착지권 25%, 폭비 경고 1.05)은 옛 엔진의 좌표 분포 기준이다. BlazeGaze 가중치의 조건은 아래 확인 항목 |
+| 2026-11-21 | **확인 — BlazeGaze 가중치는 MIT로 표기돼 있지만 학습 데이터가 비상업·연구 전용이다.** 웹 가중치는 MPIIFaceGaze(CC BY-NC-SA 4.0) 학습 결과로 보이고, 논문이 함께 쓴 GazeCapture는 "데이터셋으로 학습한 모형"의 상업적 이용을 명시적으로 막는다. 수업 과제·로컬 실행·배포 제외인 지금 쓰임은 그 범위 안이다. **11-17의 "허용적 라이선스만 쓴다"와 부딪치는지는 아직 정하지 않았다** — 표기는 MIT라 문면으로는 맞고 취지로는 걸린다 | 상류 저장소의 변환 스크립트·파일 이력과 두 데이터셋 배포처의 조건을 직접 읽었다 (`web/vendor/NOTICE.md` "BlazeGaze 가중치" 절). 법률 판단이 아니라 확인한 사실이다 | 지금은 바꿀 것 없음. **상업적 이용·서비스 배포 전**에 저자에게 묻거나 가중치를 교체한다 (손댈 곳은 `blazeGaze.js`와 자산 경로뿐). 발표·보고서에 이 모형의 결과를 실으면 WebEyeTrack·MPIIFaceGaze·GazeCapture 논문을 인용한다 |
 
 
 ## 공통 변경 제안 양식
@@ -76,8 +78,9 @@ C(황찬혁)가 취합한다. 계약·경로·점수 정책·라이브러리 버
 (2) `droppedWindows`가 진단에 쓰이기 때문이다. **지금 뭔가를 고친다고 주장하지 않는다.**
 
 **출처**: A(민서)의 측정 시제품 `HorizontalDetector`가 같은 자리에 둔 유효 시간 회계
-(`validCoverage`, `adjacent`, `maxGapMs: 250`)에서 방법을 가져왔다. 그 구현은 GPL-3.0이라
+(`validCoverage`, `adjacent`, `maxGapMs: 250`)에서 방법을 가져왔다. ~~그 구현은 GPL-3.0이라~~
 코드를 옮기지 않고 방법만 보고 우리 모듈에 맞게 새로 썼다.
+(2026-11-21 정정: `detector.mjs`에는 라이선스 표기가 없다. GPL 표기는 A의 `core/math.mjs`·`core/viewport.mjs` 둘뿐이다 — `web/vendor/NOTICE.md`.)
 
 ### 2. 줄바꿈 착지권을 쪽의 관측 범위로 (2026-11-17, C 제안 — 11절 구현)
 
@@ -166,6 +169,14 @@ C(황찬혁)가 취합한다. 계약·경로·점수 정책·라이브러리 버
 기존 코드/로그/모델을 어떻게 바꿀지: 점수가 안 바뀌므로 기존 기록 재계산이 필요 없다.
 확인 방법: node tests/pace.test.mjs (9개). 기록 14개 재생 — 아래.
 ```
+
+**2026-11-21 갱신 (`reading-pace-warning/0.2.0-dev`)** — 엔진을 바꾼 뒤 정독한 4쪽 중 3쪽이 경고를 받아 다시 만들었다.
+
+- 속도는 **최근 줄바꿈 구간들(8초)** 로 잰다. 빨라진 동안만 켜지고 느려지면 꺼진다. 문턱 900자/분은 그대로.
+- **폭비는 기록만 하고 경고하지 않는다.** 1.05는 옛 엔진의 분포에서 나온 값이고, 새 엔진의 훑기 대조군이 없다.
+- **읽는 동안에는 문장을 띄우지 않는다.** 위쪽에 뜬 문장을 보러 눈이 가면 그 이동이 기록에 섞인다. 물방울과 지금 줄 표식의 색만 바꾸고, 문장은 측정을 멈춘 뒤에 보인다.
+- B: `pace` 메타가 켜질 때·꺼질 때마다 남고(`state: on|off`), `recentCharsPerMin`·`groups`가 더해졌다. `limits.maxSpanRatio`는 `null`이다.
+- 근거와 재생 결과: `docs/comprehension_evidence.md` 20-8절. 확인: `node tests/pace.test.mjs` (13개).
 
 | | 경고 뜸 |
 |---|---|

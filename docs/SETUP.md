@@ -43,7 +43,7 @@ cd NunDojang
 uv run tools/setup_assets.py
 ```
 
-`web/vendor/`와 `web/models/`에 MediaPipe·PDF.js·pdf-lib·얼굴 모델이 들어옵니다. 네트워크가 안 되면 `docs/dependencies.md`의 수동 다운로드 표를 보세요.
+`web/vendor/`와 `web/models/`에 MediaPipe·TensorFlow.js·PDF.js·pdf-lib·얼굴 모델·시선 모형(BlazeGaze)이 들어옵니다. 2026-11-21 전에 받아 둔 사람은 한 번 더 실행하세요 (있는 파일은 건너뜁니다). 네트워크가 안 되면 `docs/dependencies.md`의 수동 다운로드 표를 보세요.
 
 ## 4. 서버 실행 (매번)
 
