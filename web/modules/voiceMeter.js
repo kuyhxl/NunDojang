@@ -43,7 +43,10 @@ const toDb = (rms) => 20 * Math.log10(Math.max(rms, 1e-7));
  * 소리 크기의 흐름에서 말소리 시간과 음절 수를 센다.
  * @returns {{push:(rms:number)=>void, take:()=>{syllables:number, voicedMs:number, frames:number}, state:object}}
  */
-export function createSyllableCounter(policy = VOICE_POLICY) {
+export function createSyllableCounter(policy = VOICE_POLICY, { keepLevels = false } = {}) {
+  // keepLevels: 10ms마다의 소리 크기(dB) 숫자를 take()로 함께 내준다 (?voicelog=1, 그림·문턱 조정용).
+  // 크기의 흐름일 뿐이라 말소리를 되살릴 수 없다. 기본은 꺼져 있고, 켜도 소리 자체는 어디에도 남지 않는다.
+  let levels = [];
   const aSmooth = 1 - Math.exp(-policy.frameMs / policy.smoothMs);
   const aNoise = 1 - Math.exp(-policy.frameMs / policy.noiseFollowMs);
   let env = null;              // 부드럽게 한 크기 (dB)
@@ -58,6 +61,7 @@ export function createSyllableCounter(policy = VOICE_POLICY) {
   function push(rms) {
     if (!Number.isFinite(rms)) return;
     const db = toDb(rms);
+    if (keepLevels) levels.push(Math.round(db * 10) / 10);
     env = env === null ? db : env + aSmooth * (db - env);
     // 바닥 소리: 처음에는 들리는 대로, 그 뒤로는 말소리가 아닐 때만 천천히 따라간다. 더 조용해지면 바로 내려간다
     if (noise === null) noise = env;
@@ -85,8 +89,8 @@ export function createSyllableCounter(policy = VOICE_POLICY) {
     push,
     /** 지난번 take() 뒤로 쌓인 것을 가져가고 비운다 */
     take() {
-      const out = { syllables, voicedMs, frames };
-      syllables = 0; voicedMs = 0; frames = 0;
+      const out = keepLevels ? { syllables, voicedMs, frames, levels } : { syllables, voicedMs, frames };
+      syllables = 0; voicedMs = 0; frames = 0; levels = [];
       return out;
     },
     get state() {
@@ -113,7 +117,7 @@ export function countSyllables(text) {
  * @param {{workletUrl:string}} o
  * @returns {Promise<{take:Function, state:object, stop:Function, sampleRate:number}>}
  */
-export async function createVoiceMeter({ workletUrl, policy = VOICE_POLICY }) {
+export async function createVoiceMeter({ workletUrl, policy = VOICE_POLICY, keepLevels = false }) {
   if (!navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === 'undefined') {
     throw Object.assign(new Error('이 브라우저에서는 마이크 측정을 쓸 수 없습니다.'), { code: 'voice_unsupported' });
   }
@@ -131,7 +135,7 @@ export async function createVoiceMeter({ workletUrl, policy = VOICE_POLICY }) {
   const node = new AudioWorkletNode(ctx, 'nd-rms-meter', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
   const mute = ctx.createGain(); mute.gain.value = 0;      // 스피커로는 아무것도 내보내지 않는다. 연결만 해 두어야 워크릿이 돈다
   source.connect(node); node.connect(mute); mute.connect(ctx.destination);
-  const counter = createSyllableCounter(policy);
+  const counter = createSyllableCounter(policy, { keepLevels });
   node.port.onmessage = (e) => counter.push(e.data);
   let stopped = false;
   return {

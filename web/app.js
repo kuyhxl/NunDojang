@@ -64,6 +64,11 @@ const keyMarksOn = urlParams.has('marks');
 // ?marks=voice → 위에 더해 **소리 내어 읽기**를 요구한다. 마이크로 소리의 크기만 재어 음절 수를 센다 (voiceMeter.js).
 // 소리는 저장하지도 내보내지도 않는다. 마이크를 못 쓰면 시선만으로 확인하는 ?marks=1 동작으로 돌아간다.
 const keyVoiceOn = urlParams.get('marks') === 'voice';
+// ?voicelog=1 → 소리의 **크기 숫자**(10ms마다 dB 하나)를 시선 기록에 함께 남긴다 (?gazelog=1·?marks=voice와 같이 쓸 때만).
+// 그림과 문턱 조정에 쓴다. 크기의 흐름만으로는 말소리를 되살릴 수 없고, 소리 자체는 여전히 저장하지 않는다. 기본은 꺼짐.
+const voiceLogOn = urlParams.has('voicelog');
+let voiceLevels = [];        // 아직 기록으로 보내지 않은 크기 숫자
+let voiceLevelsEndMs = null; // 그 마지막 숫자의 시각 (시선 기록과 같은 시계)
 // ?ocr=0 → 사진·스캔 PDF를 글자 인식으로 여는 것을 끈다 (기본 켜짐). ?ocrlang=kor → 인식 언어 바꾸기.
 const ocrOff = urlParams.get('ocr') === '0';
 const ocrLangParam = urlParams.get('ocrlang');
@@ -409,6 +414,7 @@ function endSegment(reason) {
   renderGauge(); if (keyWatch?.total) renderKeyMarks();
   logAuxScore(currentPage, reason);
   setPaceCue(false);
+  flushVoiceLevels();
   // 쪽을 넘기는 중이 아니라 측정이 멈춘 것이면, 그제야 문장으로 알린다 (눈이 글에서 떠난 뒤다)
   if (reason !== 'page_change') showPaceSummary();
 }
@@ -451,7 +457,7 @@ function makeKeyWatch(pageId = currentPage) {
 async function startVoice() {
   if (!keyVoiceOn || voice) return;
   try {
-    voice = await createVoiceMeter({ workletUrl: new URL('./modules/voiceWorklet.js', import.meta.url).href });
+    voice = await createVoiceMeter({ workletUrl: new URL('./modules/voiceWorklet.js', import.meta.url).href, keepLevels: voiceLogOn && !!gazeLog });
     gazeLog?.meta({ type: 'voice', state: 'on', version: VOICE_POLICY.version, sampleRate: voice.sampleRate });
   } catch (err) {
     voice = null;
@@ -460,7 +466,14 @@ async function startVoice() {
   }
   makeKeyWatch();   // 이미 그려 둔 쪽의 감시를 소리 조건에 맞춰 다시 만든다
 }
+/** 모아 둔 소리 크기 숫자를 기록에 한 줄로 남긴다. 숫자는 10ms 간격이고 마지막 숫자가 endMs의 것이다. */
+function flushVoiceLevels() {
+  if (!voiceLevels.length || !gazeLog) { voiceLevels = []; return; }
+  gazeLog.meta({ type: 'voiceLevel', pageId: currentPage, endMs: voiceLevelsEndMs, frameMs: VOICE_POLICY.frameMs, db: voiceLevels });
+  voiceLevels = [];
+}
 async function stopVoice() {
+  flushVoiceLevels();
   if (!voice) return;
   const st = voice.state;
   gazeLog?.meta({ type: 'voice', state: 'off', noiseDb: st.noiseDb, totalSyllables: st.totalSyllables, totalVoicedMs: st.totalVoicedMs });
@@ -612,6 +625,10 @@ function trackLine(g) {
   }
   // 지난 표본 뒤로 마이크에 들린 것. 쓰지 않아도 매번 가져가야 쌓이지 않는다
   const heard = voice ? voice.take() : null;
+  if (heard?.levels?.length && gazeLog) {
+    voiceLevels.push(...heard.levels); voiceLevelsEndMs = g.tMs;
+    if (voiceLevels.length >= 200) flushVoiceLevels();     // 약 2초마다 한 줄
+  }
   if (keyWatch && segmentOpen && keyWatch.total) trackKeySpans(sample, g.tMs, heard);
   if (step) {
     // 지나간 줄 가운데 안 읽은 것을 빨갛게 그리려면 "어디까지 가 봤는지"를 알아야 한다. 줄을 골라 위로 돌아가도 줄지 않는다

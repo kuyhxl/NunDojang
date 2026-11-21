@@ -63,6 +63,19 @@ test('take()는 가져간 뒤 비운다', () => {
   assert.ok(c.state.totalSyllables >= 8, '합계는 남는다');
 });
 
+test('keepLevels: 켰을 때만 10ms마다의 크기 숫자(dB)를 함께 내주고, 가져가면 비운다', () => {
+  const off = createSyllableCounter();
+  for (const v of quiet(50)) off.push(v);
+  assert.equal('levels' in off.take(), false, '기본은 숫자를 남기지 않는다');
+  const on = createSyllableCounter(VOICE_POLICY, { keepLevels: true });
+  for (const v of [...quiet(30), ...speech({ n: 3 })]) on.push(v);
+  const r = on.take();
+  assert.equal(r.levels.length, r.frames);
+  assert.ok(r.levels.every((d) => Number.isFinite(d) && d <= 0 && Math.round(d * 10) === d * 10 || Math.abs(d * 10 - Math.round(d * 10)) < 1e-6), 'dB, 소수 한 자리');
+  assert.ok(Math.max(...r.levels) > -30 && Math.min(...r.levels) < -55, `범위 ${Math.min(...r.levels)}~${Math.max(...r.levels)}`);
+  assert.deepEqual(on.take().levels, []);
+});
+
 test('countSyllables: 한글 한 글자가 한 음절. 공백·문장부호는 세지 않는다', () => {
   assert.equal(countSyllables('검사 전날 밤 9시 이후에는'), 11);     // 한글 10 + 숫자 1
   assert.equal(countSyllables('안 됩니다.'), 4);
