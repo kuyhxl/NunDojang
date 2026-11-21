@@ -15,6 +15,7 @@ import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressSc
 import { X_OBSERVE_POLICY } from './modules/xObserve.js';
 import { createPaceWatch } from './modules/pace.js';
 import { createKeySpanWatch } from './modules/keySpans.js';
+import { createGuide } from './modules/guide.js';
 import { createVoiceMeter, VOICE_POLICY } from './modules/voiceMeter.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
@@ -121,6 +122,11 @@ const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let paceWatch = null;        // 지금 쪽의 읽기 속도·가로 폭 감시 (쪽을 넘기면 새로 만든다)
+// 처음 쓰는 사람을 위한 안내 (guide.js). PDF를 열기 전 빈 화면에 놓인다. ?guide=0 → 숨김, ?guide=1 → 접어 두었어도 펴서 시작
+if (urlParams.get('guide') !== '0') {
+  createGuide($('guide'), { marks: keyMarksOn ? (keyVoiceOn ? 'voice' : 'gaze') : null,
+    open: urlParams.get('guide') === '1' ? true : null, reopenHost: $('dropZone'), onStart: () => $('pdfInput').click() });
+}
 let voice = null;            // 마이크 소리 크기 측정 (voiceMeter.js, ?marks=voice). 카메라를 켤 때 함께 켠다
 let keyWatch = null;         // 지금 쪽의 중요 표시 감시 (keySpans.js, ?marks=1). 쪽을 그릴 때마다 새로 만든다
 const keyDone = new Map();   // 쪽 → 채워진 표시 id → {doneAtMs, dwellMs}. 쪽을 넘겼다 돌아와도 남는다
@@ -430,6 +436,7 @@ function trackKeySpans(sample, tMs, heard = null) {
   }
   keyDone.set(currentPage, done);
   renderKeyMarks();
+  renderGauge();      // 채워진 줄의 왼쪽 표식을 빨강에서 원래 색으로
   throttledRender();
 }
 /** 지금 쪽의 중요 표시 감시를 (다시) 만든다. 앞서 채운 것은 되살린다. 마이크가 돌고 있으면 소리 내어 읽기를 요구한다. */
@@ -657,8 +664,14 @@ function renderGauge() {
   gaugePassed = passed;
   // 지나갔는데 읽음이 안 된 줄은 빨강. 아직 안 간 줄은 회색 그대로, 지금 줄은 읽는 중이므로 빨갛게 하지 않는다
   const reached = reachedByPage.get(currentPage) ?? 0;
-  const ticks = pageLineBoxes.map((b, k) =>
-    `<i class="tick${read.has(k) ? ' is-read' : k < reached && (k !== cur || !segmentOpen) ? ' is-missed' : ''}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`).join('');
+  const ticks = pageLineBoxes.map((b, k) => {
+    const passed = k < reached && (k !== cur || !segmentOpen);
+    // 중요 표시(밑줄·형광펜)가 안 채워진 줄은, 눈으로 읽어 읽음이 됐더라도 지나간 뒤에는 빨강이다 —
+    // 소리 내어(또는 천천히) 읽어야 하는 줄을 그냥 지나쳤다는 표시. 채워지면 원래 색으로 돌아간다. 점수는 건드리지 않는다
+    const keyPending = passed && !!keyWatch?.pendingOnLine(k);
+    const state = keyPending ? ' is-missed' : read.has(k) ? ' is-read' : passed ? ' is-missed' : '';
+    return `<i class="tick${state}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`;
+  }).join('');
   const pb = passIdx === null ? null : pageLineBoxes[passIdx];
   const mark = pb ? `<div class="pass-mark${passed ? ' is-passed' : ''}" style="left:${pb.left}px;width:${pb.width}px;top:${pb.top + pb.height}px"><span>${passed ? '통과 ✓' : '여기까지 읽으면 통과'}</span></div>` : '';
   el.innerHTML = ticks + mark;
