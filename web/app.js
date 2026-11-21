@@ -48,6 +48,9 @@ const xWindow = urlParams.has('xwindow');
 // 읽는 동안에는 글자를 띄우지 않는다 — 물방울과 지금 줄 표식의 색만 바꾼다. 문장은 측정을 멈춘 뒤에 보인다.
 // 관문은 한 사람의 기록(성실 47쪽·훑기 11쪽)에서 고른 잠정값이다 (docs/comprehension_evidence.md 16절).
 const paceWarn = urlParams.get('pace') !== '0';
+// 보정 점 배치. 기본은 글이 놓이는 영역 위의 9점(3×3). ?calib=27 → 예전 화면 전체 27점(비교용).
+// 근거: 새 엔진의 출력이 화면 좌우 끝에서 눌려, 화면 전체로 맞추면 글 영역이 늘어 찍힌다 (docs/comprehension_evidence.md 20-10절).
+const calibScreen27 = urlParams.get('calib') === '27';
 // ?focus=1 → 읽기 모드(개발용 시험): 측정하는 동안 PDF를 화면 가운데로 띄운다.
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
@@ -640,15 +643,33 @@ function clearCalibration() {
 async function runCalibration() {
   clearCalibration();
   if (!gazeTracker?.running) return 'skipped';
-  const result = await calibration.run(gazeTracker);
+  // 글이 놓일 자리를 먼저 잡는다. 읽기 모드면 지면을 가운데로 옮겨 다시 그린 뒤, **그 자리 위에** 보정 점을 찍는다.
+  const movedToFocus = await setFocus(true);
+  const result = await calibration.run(gazeTracker, { region: calibScreen27 ? null : readingRegion() });
   if (result.status === 'done') {
     gazeFit = result.fit; gazeReference = result.reference; $('recenterBtn').disabled = false;
-    gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
-    await setFocus(true);   // 읽기 모드면 가운데로 옮겨 다시 그린 뒤 첫 줄을 맞춘다
+    gazeLog?.meta({ type: 'calibration', viewport: { width: window.innerWidth, height: window.innerHeight }, layout: calibration.layout,
+      quality: result.fit, fit: gazeTracker.calibration.fit_, reference: result.reference });
     if (await anchorFirstLine() === 'aborted') return 'aborted';
   }
-  else clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
+  else {
+    clearCalibration();     // 다시 보정하다 건너뛰면 앞서 맞춘 모형이 남아 있다
+    if (movedToFocus) await setFocus(false);   // 보정 없이는 읽기 모드에 들어가지 않는다 (예전과 같다)
+  }
   return result.status;
+}
+
+/**
+ * 보정 점을 찍을 글 영역 (뷰포트 CSS px). 재배치 쪽의 단(글 왼쪽 끝~오른쪽 끝) × 첫 줄~마지막 줄 자리.
+ * 지금 쪽이 짧아도(마지막 쪽) 꽉 찬 쪽만큼 잡는다 — 지면 높이는 쪽마다 같다. 쓸 수 없으면 null(화면 전체 배치로 돌아간다).
+ */
+function readingRegion() {
+  const first = pageLineBoxes[0];
+  if (pdf?.mode !== 'reflow' || !first) return null;
+  firstLineTarget();   // 첫 줄이 화면 밖이면 보이게 굴려 둔다 (첫 줄 맞춤과 같은 자리에서 보정한다)
+  const r = $('pdfCanvas').getBoundingClientRect();
+  const half = first.top + first.height / 2;   // 지면 위 끝에서 첫 줄 가운데까지. 아래도 같은 여백을 둔다
+  return { left: r.left + first.left, top: r.top + half, width: first.width, height: r.height - 2 * half };
 }
 
 /** 첫 줄 맞춤 점의 화면 좌표(CSS px). 첫 줄이 화면 밖이면 보이게 굴린다. 줄이 없으면 null. */

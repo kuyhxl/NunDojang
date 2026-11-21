@@ -1,6 +1,6 @@
 // 자세 맞춤 → 다점 보정·재중심 화면 — C 소유. 표본 수집과 회귀는 gazeTracker가 맡는다.
 // 영상은 이 화면에 표시만 하며 저장하거나 밖으로 보내지 않는다.
-import { POSE_RULES, COLLECT, HEAD_TURNS, FIT_LIMITS, evaluatePose, poseDrifted, poseReturnHint, turnAmount, turnStatus, calibrationPoints, assessFit, faceLightRegion, meanLuma } from './gazeCalibration.js';
+import { POSE_RULES, COLLECT, HEAD_TURNS, FIT_LIMITS, evaluatePose, poseDrifted, poseReturnHint, turnAmount, turnStatus, calibrationPoints, assessFit, faceLightRegion, meanLuma, usableRegion, REGION_GRID } from './gazeCalibration.js';
 
 export const DARK_MESSAGE = '카메라에 얼굴이 어둡게 보여요. 조명을 켜거나 밝은 곳으로 옮겨 주세요.';
 const UNREADABLE_MESSAGE = '눈을 충분히 읽지 못했어요. 눈을 뜨고 다시 눌러 주세요';
@@ -124,7 +124,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
 
   function finish(result) {
     phase = 'idle'; root.hidden = true; video.srcObject = null;
-    hidePause(); hideTurnView(); root.classList.remove('is-light', 'is-anchor'); untapHead?.(); untapHead = null;
+    hidePause(); hideTurnView(); root.classList.remove('is-light', 'is-anchor', 'is-region', 'is-region-top'); untapHead?.(); untapHead = null;
     document.removeEventListener('keydown', onKey);
     const resolve = resolveRun; resolveRun = null;
     resolve?.(result);
@@ -139,7 +139,11 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
 
   function beginPoints() {
     phase = 'wait-click'; show(pointsView); video.srcObject = null;
-    points = calibrationPoints(window.innerWidth, window.innerHeight);
+    points = calibrationPoints(window.innerWidth, window.innerHeight, { region: runRegion });
+    // 글 영역 위에 점을 찍으면 화면 위쪽 26%의 안내 글이 맨 윗줄 점과 겹친다. 영역 아래(자리가 없으면 위)로 옮긴다.
+    const used = usableRegion(runRegion, window.innerWidth, window.innerHeight);
+    root.classList.toggle('is-region', !!used);
+    root.classList.toggle('is-region-top', !!used && used.top + used.height > window.innerHeight - 96);
     pointIndex = 0; collected = [];
     placeDot();
   }
@@ -255,6 +259,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
   let lastFit = null;
   let resultShownAt = 0;
   let recenterShownAt = 0;
+  let runRegion = null;   // 이번 보정에서 점을 찍을 글 영역. null이면 화면 전체
   function showResult() {
     root.classList.remove('is-light');
     phase = 'result'; show(resultView); skip.hidden = true; resultShownAt = performance.now();
@@ -313,7 +318,17 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
     },
     setLightWarning(on) { $('.calib-light').hidden = !on; },
     /** @returns Promise<{status:'done'|'skipped'|'aborted', fit?, reference?}> */
-    run(tracker) { return open(tracker, 'calibrate', beginPose); },
+    /**
+     * 자세 맞춤 → 다점 보정 → 결과.
+     * @param {{region?: {left:number,top:number,width:number,height:number}|null}} [o]
+     *   region: 글이 놓이는 영역(뷰포트 CSS px). 주면 그 위에 9점만 찍는다. 없으면 화면 전체 27점(예전 배치).
+     */
+    run(tracker, { region = null } = {}) { runRegion = region; return open(tracker, 'calibrate', beginPose); },
+    /** 방금(또는 지금) 보정에 쓴 점들의 자리 (기록용) */
+    get layout() {
+      const used = usableRegion(runRegion, window.innerWidth, window.innerHeight);
+      return { name: used ? `region-${REGION_GRID.cols}x${REGION_GRID.rows}` : 'screen-27', region: used, points: points.length };
+    },
     /**
      * 보정은 두고 치우침만 바로잡는다. target({x, y}, CSS px)을 주면 PDF를 가리지 않고 그 자리에 점을 띄운다.
      * @returns Promise<{status:'recentered'|'skipped'|'aborted', reference?}>
