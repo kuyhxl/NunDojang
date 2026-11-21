@@ -49,7 +49,8 @@ async def no_cache(request: Request, call_next):
 @app.get("/api/health")
 async def health():
     """서버가 떠 있는지, 자산이 준비됐는지."""
-    missing = [p for p in ("vendor/pdfjs/pdf.mjs", "vendor/mediapipe/vision_bundle.mjs", "models/face_landmarker.task")
+    missing = [p for p in ("vendor/pdfjs/pdf.mjs", "vendor/mediapipe/vision_bundle.mjs", "models/face_landmarker.task",
+                          "vendor/tfjs/tf.fesm.min.js", "models/blazegaze/model.json", "models/blazegaze/group1-shard1of1.bin")
                if not (WEB / p).exists()]
     return {"ok": True, "version": APP_VERSION, "missingAssets": missing}
 

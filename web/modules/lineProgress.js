@@ -17,7 +17,8 @@ export const LP_X_RATIO = 0.4;
 export const LP_MAX_SPEED_RATIO = 1.0;
 /** 표본이 이보다 오래 끊기면 그 사이는 읽은 시간으로 세지 않는다 (ms).
  *  A(민서)의 측정 시제품이 쓰는 maxGapMs 250과 같은 값이다 — 방법만 가져왔고 코드는 옮기지 않았다.
- *  (출처: PR #14 HorizontalDetector의 유효 시간 회계. 그 구현은 GPL-3.0이라 제품에 넣지 않는다) */
+ *  (출처: PR #14 HorizontalDetector의 유효 시간 회계. 전에는 "그 구현은 GPL-3.0이라"고 적었는데 그 파일에는 라이선스 표기가 없다
+ *   — web/vendor/NOTICE.md 2026-11-21 정정) */
 export const LP_MAX_GAP_MS = 250;
 
 /**

@@ -10,7 +10,8 @@
 
 /** 표본이 이보다 오래 끊기면 그 사이를 이어서 보지 않는다 (CSS px가 아니라 ms).
  *  A(민서)의 측정 시제품이 같은 자리에 둔 maxGapMs 250과 같은 값이다 — 방법만 가져왔고 코드는 옮기지 않았다.
- *  (출처: PR #14 HorizontalDetector. 그 구현은 GPL-3.0이라 제품에 넣지 않는다. docs/decisions.md 참고) */
+ *  (출처: PR #14 HorizontalDetector. 전에는 "그 구현은 GPL-3.0이라"고 적었는데 그 파일에는 라이선스 표기가 없다
+ *   — web/vendor/NOTICE.md 2026-11-21 정정) */
 export const SWEEP_MAX_GAP_MS = 250;
 
 import { createXObserver } from './xObserve.js';

@@ -127,7 +127,8 @@ def main():
     print(f"  앱:        {url}")
     print(f"  측정 점검: {url}dev/measurement.html")
     print(f"  통합 점검: {url}dev/integration.html")
-    missing = [p for p in ("vendor/pdfjs/pdf.mjs", "vendor/mediapipe/vision_bundle.mjs", "models/face_landmarker.task")
+    missing = [p for p in ("vendor/pdfjs/pdf.mjs", "vendor/mediapipe/vision_bundle.mjs", "models/face_landmarker.task",
+                          "vendor/tfjs/tf.fesm.min.js", "models/blazegaze/model.json", "models/blazegaze/group1-shard1of1.bin")
                if not os.path.exists(os.path.join(ROOT, p))]
     if missing:
         print("  [주의] 아직 없는 자산:", ", ".join(missing))

@@ -561,6 +561,7 @@ async function startGaze() {
   try {
     gazeTracker ??= await createGazeTracker({
       videoElement: $('camPreview'), wasmBaseUrl: urls.wasmBaseUrl, modelAssetUrl: urls.modelAssetUrl,
+      tfModuleUrl: urls.tfjsModuleUrl, gazeModelUrl: urls.gazeModelUrl,
       options: { shareVideo: true },
       onGaze: (g) => { latestGaze = g; syncTextLeft(); countGazeSweep(g); trackLine(g); gazeLog?.push(gazeLogRow(g, calibration.progress, window.scrollY)); },
       onError: handleGazeError

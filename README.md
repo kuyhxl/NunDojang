@@ -20,7 +20,7 @@
 처음이면 `docs/SETUP.md`를 따라 **uv**를 설치하세요 (한 줄, 한 번).
 
 ```
-uv run tools/setup_assets.py   # 처음 한 번: MediaPipe·PDF.js·pdf-lib·모델 다운로드
+uv run tools/setup_assets.py   # 처음 한 번: MediaPipe·TensorFlow.js·PDF.js·pdf-lib·모델 다운로드
 uv run nundojang               # 서버 실행 → http://localhost:8000/
 ```
 

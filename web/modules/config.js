@@ -27,6 +27,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   tesseractLangPath: './vendor/tesseract/lang/',
   mediaPipeWasmPath: './vendor/mediapipe/wasm',
   faceModelPath: './models/face_landmarker.task',
+  tfjsModulePath: './vendor/tfjs/tf.fesm.min.js',       // 시선 모형(BlazeGaze)을 돌리는 TensorFlow.js
+  gazeModelPath: './models/blazegaze/model.json',       // WebEyeTrack의 BlazeGaze 가중치 (같은 폴더의 .bin을 함께 읽는다)
   pdfWorkerPath: './vendor/pdfjs/pdf.worker.mjs',
   pdfCMapPath: './vendor/pdfjs/cmaps/',
   pdfStandardFontPath: './vendor/pdfjs/standard_fonts/',
@@ -64,6 +66,8 @@ export function resolveAssetUrls(config = DEFAULT_CONFIG) {
     webBaseUrl: webBaseUrl.href,
     wasmBaseUrl: new URL(config.mediaPipeWasmPath, webBaseUrl).href,
     modelAssetUrl: new URL(config.faceModelPath, webBaseUrl).href,
+    tfjsModuleUrl: new URL(config.tfjsModulePath ?? DEFAULT_CONFIG.tfjsModulePath, webBaseUrl).href,
+    gazeModelUrl: new URL(config.gazeModelPath ?? DEFAULT_CONFIG.gazeModelPath, webBaseUrl).href,
     pdfWorkerUrl: new URL(config.pdfWorkerPath, webBaseUrl).href,
     pdfCMapUrl: new URL(config.pdfCMapPath, webBaseUrl).href,
     pdfStandardFontUrl: new URL(config.pdfStandardFontPath, webBaseUrl).href,
