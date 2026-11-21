@@ -14,6 +14,8 @@ import { createGazeSweepCounter, sweepOptionsFor, SWEEP_MAX_GAP_MS, SWEEP_WINDOW
 import { createLineProgress, LINE_PROGRESS_POLICY, passLineIndex, lineProgressScore, LP_MAX_GAP_MS } from './modules/lineProgress.js';
 import { X_OBSERVE_POLICY } from './modules/xObserve.js';
 import { createPaceWatch } from './modules/pace.js';
+import { createKeySpanWatch } from './modules/keySpans.js';
+import { createVoiceMeter, VOICE_POLICY } from './modules/voiceMeter.js';
 import { createEyeGlass } from './modules/eyeGlass.js';
 import { createCalibrationOverlay, createLightMeter, DARK_MESSAGE } from './modules/calibrationOverlay.js';
 import { poseDrifted, createDarkDetector } from './modules/gazeCalibration.js';
@@ -55,6 +57,12 @@ const calibScreen27 = urlParams.get('calib') === '27';
 const focusMode = urlParams.has('focus');
 // ?score=lines → 줄 단위 진행 점수(개발용 시험, 팀 합의 전): 쪽 점수 = 읽은 줄 ÷ 전체 줄. 줄마다 읽음 표식과 통과 선을 보여 준다.
 const scoreLines = urlParams.get('score') === 'lines';
+// ?marks=1 → 중요 표시 응시 확인(개발용 시험, 팀 합의 전): PDF의 밑줄·형광펜 주석을 읽어, 그 구간을 천천히 응시하며
+// 읽어야 채워지게 한다. 표시가 모두 채워져야 서명이 열린다. 점수 계산과 공통 계약은 건드리지 않는다 (docs/feedback.md 6절).
+const keyMarksOn = urlParams.has('marks');
+// ?marks=voice → 위에 더해 **소리 내어 읽기**를 요구한다. 마이크로 소리의 크기만 재어 음절 수를 센다 (voiceMeter.js).
+// 소리는 저장하지도 내보내지도 않는다. 마이크를 못 쓰면 시선만으로 확인하는 ?marks=1 동작으로 돌아간다.
+const keyVoiceOn = urlParams.get('marks') === 'voice';
 // ?ocr=0 → 사진·스캔 PDF를 글자 인식으로 여는 것을 끈다 (기본 켜짐). ?ocrlang=kor → 인식 언어 바꾸기.
 const ocrOff = urlParams.get('ocr') === '0';
 const ocrLangParam = urlParams.get('ocrlang');
@@ -62,6 +70,7 @@ const configOverrides = {
   ...(reflowParam === 20 || reflowParam === 24 ? { reflowSize: reflowParam } : {}),
   ...(scoreLines ? { scorePolicyVersion: LINE_PROGRESS_POLICY } : {}),
   ...(ocrOff ? { ocrEnabled: false } : {}),
+  ...(keyMarksOn ? { keyMarks: true } : {}),
   ...(ocrLangParam ? { ocrLangs: ocrLangParam } : {})
 };
 const config = Object.keys(configOverrides).length
@@ -92,7 +101,9 @@ const eyeGlass = createEyeGlass($('eyeGlass'));
 if (DETECTOR_CONFIG.directionSign !== null) eyeGlass.setDirectionSign(DETECTOR_CONFIG.directionSign);
 if (yLock) eyeGlass.setLineAnchor(1);   // 줄 밑선
 const calibration = createCalibrationOverlay({ sourceVideo: $('camPreview'),
-  resultNote: paceWarn ? '읽는 동안 물방울이 주황색으로 바뀌면 너무 빠르게 지나가고 있다는 뜻입니다.' : '' });
+  resultNote: [paceWarn ? '읽는 동안 물방울이 주황색으로 바뀌면 너무 빠르게 지나가고 있다는 뜻입니다.' : '',
+    keyVoiceOn ? '밑줄·형광펜으로 표시된 부분은 소리 내어 읽어 주세요. 다 읽으면 표시가 초록색으로 바뀝니다.'
+      : keyMarksOn ? '밑줄·형광펜으로 표시된 부분은 천천히 읽어 주세요. 다 읽으면 표시가 초록색으로 바뀝니다.' : ''].filter(Boolean).join(' ') });
 let gazeTracker = null;    // 시선 좌표 추정기. A의 영상을 함께 읽으며 물방울 표시에만 쓰고 점수에는 쓰지 않는다
 let latestGaze = null;     // 추정기의 가장 최근 출력
 let shownGaze = null;      // 물방울에 마지막으로 준 좌표. 추정이 잠깐 끊겨도 이 자리를 지킨다
@@ -110,11 +121,16 @@ const auxPages = new Map();
 let gazeSweep = null;      // 지금 쪽의 시선 x 줄바꿈 계수기 (쪽을 넘기면 새로 만든다)
 let observeLogged = false;   // 관측 창 닫힘을 쪽마다 한 번만 기록
 let paceWatch = null;        // 지금 쪽의 읽기 속도·가로 폭 감시 (쪽을 넘기면 새로 만든다)
+let voice = null;            // 마이크 소리 크기 측정 (voiceMeter.js, ?marks=voice). 카메라를 켤 때 함께 켠다
+let keyWatch = null;         // 지금 쪽의 중요 표시 감시 (keySpans.js, ?marks=1). 쪽을 그릴 때마다 새로 만든다
+const keyDone = new Map();   // 쪽 → 채워진 표시 id → {doneAtMs, dwellMs}. 쪽을 넘겼다 돌아와도 남는다
+const keyTotals = new Map(); // 쪽 → 그 쪽의 표시 개수 (그려 본 쪽만 안다)
 let paceOn = false;          // 지금 '빠르게 지나가는 중' 표시가 켜져 있는가
 const pacePages = new Map(); // 빠르게 지나간 적이 있는 쪽 → 그때의 최고 속도(자/분). 측정을 멈춘 뒤 문장으로 알린다
 let lineProg = null;       // 지금 쪽의 줄 추적·읽음 판정 (lineProgress.js). 세로 고정 물방울과 줄 단위 점수가 함께 쓴다
 let gaugePassed = null;     // 통과 선 표시를 마지막으로 그린 통과 상태
 const readByPage = new Map();   // pageId → 읽음이 된 줄 번호 Set (쪽을 다시 열어도 누적)
+const reachedByPage = new Map();   // pageId → 줄 추적기가 가 본 가장 아래 줄. 그 위에서 안 읽은 줄·안 채운 표시를 빨갛게 그린다
 let driftSince = null, driftWarned = false;
 const POSE_DRIFT_WARN_MS = 2000;
 const POSE_DRIFT_MESSAGE = '자세가 보정할 때와 달라졌어요. 처음 자세로 돌아오거나 재보정을 눌러 주세요.';
@@ -159,7 +175,7 @@ async function openPdfFile(file) {
     searchCache = null;
     store = createSessionStore({ documentId: uid('doc'), sessionId: uid('session'), pageCount: n, config });
     sessionT0 = performance.now(); segmentCounter = 0;
-    auxPages.clear(); readByPage.clear(); passedSeen.clear();
+    auxPages.clear(); readByPage.clear(); reachedByPage.clear(); passedSeen.clear(); keyDone.clear(); keyTotals.clear(); pacePages.clear();
     detector = createMovementDetector({ config: DETECTOR_CONFIG });
     resetSignature();
     $('camStartBtn').disabled = false;
@@ -314,6 +330,8 @@ async function showPage(pageId) {
     ? createPaceWatch({ layout: pdf.layout, lineWidths: pageLineBoxes.map((b) => b.textWidth) })
     : null;
   setPaceCue(false);
+  // 중요 표시: 이 쪽의 줄마다 표시 자리를 넘겨 감시를 만든다. 앞서 채운 것은 되살린다
+  makeKeyWatch(pageId);
   renderGauge();
   if (gazeLog) {
     const r = $('eyeGlass').parentElement.getBoundingClientRect();
@@ -353,7 +371,8 @@ async function closeDocument() {
   clearCalibration(); await stopGaze();
   if (tracker) { await tracker.stop(); }
   measuring = false; segmentOpen = false; currentPage = 0; pageCount = 0; store = null; currentFile = null;
-  auxPages.clear(); readByPage.clear(); passedSeen.clear(); gazeSweep = null; lineProg = null; renderGauge();
+  auxPages.clear(); readByPage.clear(); reachedByPage.clear(); passedSeen.clear(); keyDone.clear(); keyTotals.clear(); pacePages.clear(); keyWatch = null; renderKeyMarks();
+  gazeSweep = null; lineProg = null; renderGauge();
   document.body.classList.remove('is-focus'); $('navFocusExitBtn').hidden = true;
   if (pdf) await pdf.close();
   $('pageList').innerHTML = '<li class="placeholder">아직 연 문서가 없습니다</li>'; $('pageLabel').textContent = '페이지 –/–'; $('paneLabel').textContent = '문서 없음'; $('docName').textContent = '–'; $('progressDot').style.left = '0%'; $('navPages').textContent = '페이지 –/–'; $('navScore').textContent = '점수 –';
@@ -378,11 +397,93 @@ function endSegment(reason) {
   if (!store || !segmentOpen) return;
   if (!SEGMENT_END_REASONS.includes(reason)) reason = 'manual_stop';
   store.endSegment({ tMs: nowMs(), reason });
+  // 측정이 끝났다: 줄 추적기가 서 있던 줄까지는 지나간 것으로 친다 (거기서 못 읽은 줄도 빨갛게 보이게)
+  if (lineProg) reachedByPage.set(currentPage, Math.max(reachedByPage.get(currentPage) ?? 0, lineProg.line + 1));
   segmentOpen = false;
+  renderGauge(); if (keyWatch?.total) renderKeyMarks();
   logAuxScore(currentPage, reason);
   setPaceCue(false);
   // 쪽을 넘기는 중이 아니라 측정이 멈춘 것이면, 그제야 문장으로 알린다 (눈이 글에서 떠난 뒤다)
   if (reason !== 'page_change') showPaceSummary();
+}
+
+/**
+ * 중요 표시 응시 확인 (?marks=1). 줄 추적기가 있는 줄의 표시에 시선이 머문 시간을 쌓고, 채워지면 초록으로 바꾼다.
+ * 채워지는 정도는 그 표시 위에 바로 보인다 — 눈이 이미 와 있는 자리라 시선을 끌어가지 않는다.
+ */
+function trackKeySpans(sample, tMs, heard = null) {
+  const x = sample.xPx - $('pdfCanvas').getBoundingClientRect().left;   // 캔버스 왼쪽 끝에서 잰 자리 (표시의 left와 같은 기준)
+  const newly = keyWatch.push({ tMs, x, line: lineProg.line, syllables: heard?.syllables ?? 0, voicedMs: heard?.voicedMs ?? 0 });
+  const spans = keyWatch.spans;
+  for (const sp of spans) {      // 채워지는 중인 막대만 폭을 고친다 (전체를 다시 그리지 않는다)
+    if (sp.done || sp.line !== lineProg.line) continue;
+    const el = $('keyMarks').querySelector(`[data-id="${sp.id}"] b`);
+    if (el) el.style.width = `${Math.round(sp.progress * 100)}%`;
+  }
+  if (!newly.length) return;
+  const done = keyDone.get(currentPage) ?? new Map();
+  for (const id of newly) {
+    const sp = spans.find((s) => s.id === id);
+    done.set(id, { doneAtMs: sp.doneAtMs, dwellMs: sp.dwellMs, chars: sp.chars, type: sp.type, line: sp.line });
+    gazeLog?.meta({ type: 'keySpan', pageId: currentPage, id, line: sp.line, kind: sp.type, chars: sp.chars, needMs: sp.needMs, dwellMs: sp.dwellMs, tMs,
+      ...(keyWatch.voice ? { voice: true, syllables: sp.syllables, needSyllables: sp.needSyllables, heard: sp.heard, voicedMs: sp.voicedMs, needVoicedMs: sp.needVoicedMs } : {}) });
+  }
+  keyDone.set(currentPage, done);
+  renderKeyMarks();
+  throttledRender();
+}
+/** 지금 쪽의 중요 표시 감시를 (다시) 만든다. 앞서 채운 것은 되살린다. 마이크가 돌고 있으면 소리 내어 읽기를 요구한다. */
+function makeKeyWatch(pageId = currentPage) {
+  keyWatch = keyMarksOn && pdf?.mode === 'reflow' && pageId > 0
+    ? createKeySpanWatch({ lineMarks: pageLineBoxes.map((b) => b.marks ?? []), layout: pdf.layout, voice: !!voice })
+    : null;
+  if (keyWatch) { keyWatch.restore(keyDone.get(pageId)); keyTotals.set(pageId, keyWatch.total); }
+  renderKeyMarks();
+}
+/** 마이크를 켠다 (?marks=voice). 못 켜면 알리고 시선만으로 확인하는 동작으로 돌아간다. */
+async function startVoice() {
+  if (!keyVoiceOn || voice) return;
+  try {
+    voice = await createVoiceMeter({ workletUrl: new URL('./modules/voiceWorklet.js', import.meta.url).href });
+    gazeLog?.meta({ type: 'voice', state: 'on', version: VOICE_POLICY.version, sampleRate: voice.sampleRate });
+  } catch (err) {
+    voice = null;
+    setMsg('viewerMsg', `마이크를 쓸 수 없어 중요 표시는 시선만으로 확인합니다 (${err.message})`, 'warn');
+    gazeLog?.meta({ type: 'voice', state: 'failed', message: String(err.message ?? err) });
+  }
+  makeKeyWatch();   // 이미 그려 둔 쪽의 감시를 소리 조건에 맞춰 다시 만든다
+}
+async function stopVoice() {
+  if (!voice) return;
+  const st = voice.state;
+  gazeLog?.meta({ type: 'voice', state: 'off', noiseDb: st.noiseDb, totalSyllables: st.totalSyllables, totalVoicedMs: st.totalVoicedMs });
+  await voice.stop(); voice = null;
+  makeKeyWatch();
+}
+
+/** 지금 쪽의 중요 표시를 지면 위에 그린다. 안 채워진 것은 주황, 채워진 것은 초록. */
+function renderKeyMarks() {
+  const el = $('keyMarks');
+  if (!keyWatch || !keyWatch.total) { el.hidden = true; el.innerHTML = ''; return; }
+  el.hidden = false;
+  el.innerHTML = keyWatch.spans.map((sp) => {
+    const b = pageLineBoxes[sp.line];
+    // 줄 추적기가 지나갔는데 안 채워진 표시는 빨강 (지금 그 줄에 있으면 채우는 중이므로 주황 그대로)
+    const missed = !sp.done && sp.line < (reachedByPage.get(currentPage) ?? 0) && (sp.line !== lineProg?.line || !segmentOpen);
+    const cls = `kmark kmark-${sp.type === 'Highlight' ? 'hl' : 'ul'}${sp.done ? ' is-done' : ''}${missed ? ' is-missed' : ''}${keyWatch.voice ? ' is-voice' : ''}`;
+    return `<i class="${cls}" data-id="${sp.id}" style="left:${sp.left}px;top:${b.top}px;width:${sp.width}px;height:${b.height}px"><b style="width:${Math.round(sp.progress * 100)}%"></b></i>`;
+  }).join('');
+}
+/** 그려 본 쪽의 중요 표시가 모두 채워졌는가. 표시 기능이 꺼져 있으면 언제나 참 */
+function keyMarksAllDone() {
+  if (!keyMarksOn) return true;
+  for (const [pid, total] of keyTotals) if ((keyDone.get(pid)?.size ?? 0) < total) return false;
+  return true;
+}
+/** 쪽 목록·상태 줄에 붙일 "중요 n/m". 표시가 없는 쪽이면 빈 문자열 */
+function keyMarksLabel(pid) {
+  const total = keyTotals.get(pid) ?? 0;
+  return total ? `중요 ${keyDone.get(pid)?.size ?? 0}/${total}` : '';
 }
 
 /**
@@ -414,6 +515,8 @@ function selectLine(k, how) {
   if (!lineProg || !measuring || !segmentOpen || calibration.active || pdf?.mode !== 'reflow') return false;
   if (!Number.isInteger(k) || k < 0 || k >= pageLineBoxes.length) return false;
   const step = lineProg.jumpTo(k);
+  if (step.to > (reachedByPage.get(currentPage) ?? 0)) reachedByPage.set(currentPage, step.to);
+  if (keyWatch?.total) renderKeyMarks();
   if (yLock) eyeGlass.setLine(step.to);
   const tMs = latestGaze?.tMs ?? null;
   if (tMs !== null) paceWatch?.step(step, tMs);
@@ -500,7 +603,13 @@ function trackLine(g) {
       if (now > (pacePages.get(currentPage) ?? 0)) pacePages.set(currentPage, now);
     }
   }
+  // 지난 표본 뒤로 마이크에 들린 것. 쓰지 않아도 매번 가져가야 쌓이지 않는다
+  const heard = voice ? voice.take() : null;
+  if (keyWatch && segmentOpen && keyWatch.total) trackKeySpans(sample, g.tMs, heard);
   if (step) {
+    // 지나간 줄 가운데 안 읽은 것을 빨갛게 그리려면 "어디까지 가 봤는지"를 알아야 한다. 줄을 골라 위로 돌아가도 줄지 않는다
+    if (step.to > (reachedByPage.get(currentPage) ?? 0)) reachedByPage.set(currentPage, step.to);
+    if (keyWatch?.total) renderKeyMarks();
     if (yLock) eyeGlass.setLine(step.to);
     // atMs(줄을 실제로 끝낸 시각)·peak/landed·yLine은 기록 전용이다. 판정에는 쓰지 않는다.
     // yLine이 to와 자주 어긋나면 줄바꿈 검출이 놓치고 있다는 뜻 (docs/comprehension_evidence.md 9절).
@@ -546,8 +655,10 @@ function renderGauge() {
   const passIdx = passLineIndex(pageLineBoxes.length, config.passThreshold);
   const passed = !!store.getPage(currentPage)?.evaluation.passed;
   gaugePassed = passed;
+  // 지나갔는데 읽음이 안 된 줄은 빨강. 아직 안 간 줄은 회색 그대로, 지금 줄은 읽는 중이므로 빨갛게 하지 않는다
+  const reached = reachedByPage.get(currentPage) ?? 0;
   const ticks = pageLineBoxes.map((b, k) =>
-    `<i class="tick${read.has(k) ? ' is-read' : ''}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`).join('');
+    `<i class="tick${read.has(k) ? ' is-read' : k < reached && (k !== cur || !segmentOpen) ? ' is-missed' : ''}${k === cur ? ' is-current' : ''}" style="left:${b.left - 20}px;top:${b.top + 6}px;height:${b.height - 12}px"></i>`).join('');
   const pb = passIdx === null ? null : pageLineBoxes[passIdx];
   const mark = pb ? `<div class="pass-mark${passed ? ' is-passed' : ''}" style="left:${pb.left}px;width:${pb.width}px;top:${pb.top + pb.height}px"><span>${passed ? '통과 ✓' : '여기까지 읽으면 통과'}</span></div>` : '';
   el.innerHTML = ticks + mark;
@@ -740,6 +851,7 @@ $('camStartBtn').addEventListener('click', async () => {
     updateCamBadge(true); setMsg('viewerMsg', '', '');
     $('camStopBtn').disabled = false; $('measureToggleBtn').disabled = false; $('calibrateBtn').disabled = false;
     await startGaze();
+    await startVoice();
     if (await runCalibration() !== 'aborted') startMeasuring();
   } catch (err) {
     setMsg('viewerMsg', `카메라 시작 실패: ${err.message}`, 'bad');
@@ -762,6 +874,7 @@ $('recenterBtn').addEventListener('click', async () => {
 $('camStopBtn').addEventListener('click', async () => {
   endSegment('manual_stop'); measuring = false; clearCalibration(); resetLight();
   await setFocus(false);
+  await stopVoice();
   await stopGaze();
   if (tracker) await tracker.stop();
   updateCamBadge(false); updateMeasureBtn(); $('calibrateBtn').disabled = true;
@@ -893,7 +1006,8 @@ function renderPanel() {
   $('pageScore').textContent = formatScore(ev);
   $('validTime').textContent = `${(p.validMs / 1000).toFixed(1)}s / ${(p.activeMs / 1000).toFixed(1)}s (${Math.round(ev.validRatio * 100)}%)`;
   $('blinkCount').textContent = p.blinkCount ?? '미설정';
-  $('pageStatus').textContent = statusText(ev);
+  const keyLeft = (keyTotals.get(currentPage) ?? 0) - (keyDone.get(currentPage)?.size ?? 0);
+  $('pageStatus').textContent = keyMarksOn && keyLeft > 0 ? `${statusText(ev)} · 중요 표시 ${keyLeft}곳이 남았습니다 (표시된 부분을 ${voice || (keyVoiceOn && !document.body.classList.contains('is-live')) ? '소리 내어' : '천천히'} 읽어 주세요)` : statusText(ev);
   noteIfUnpassed(currentPage, ev);
   if (scoreLines && ev.passed !== gaugePassed) { gaugePassed = ev.passed; renderGauge(); }   // 통과 선을 '통과 ✓'로
   $('pageStatus').className = `st-${ev.status}`;
@@ -904,11 +1018,14 @@ function renderPanel() {
     const attrs = `data-page="${id}" tabindex="0" role="button"${aria}`;   // 누르면 그 쪽으로 이동
     if (!pg) return `<li class="st-unmeasured${cur}" ${attrs} title="${id}쪽으로 이동"><span>${id}쪽 · 아직 열지 않음</span><span class="num">—</span></li>`;  // 아직 넘겨 보지 않은 쪽
     const e = pg.evaluation;
-    const hasty = pacePages.has(id) ? ' <em class="hasty-tag" title="빠르게 지나간 구간이 있었습니다 (기록 전용, 점수와 무관)">빠름</em>' : '';
+    const hasty = (pacePages.has(id) ? ' <em class="hasty-tag" title="빠르게 지나간 구간이 있었습니다 (기록 전용, 점수와 무관)">빠름</em>' : '')
+      + (keyMarksLabel(id) ? ` <em class="key-tag${(keyDone.get(id)?.size ?? 0) >= keyTotals.get(id) ? ' is-done' : ''}" title="밑줄·형광펜으로 표시된 부분을 천천히 읽어야 채워집니다">${keyMarksLabel(id)}</em>` : '');
     return `<li class="st-${e.status}${cur}" ${attrs} title="${statusText(e)} · ${id}쪽으로 이동"><span>${id}쪽 · ${statusText(e)}${hasty}</span><span class="num">${formatScore(e)}</span></li>`;
   }).join('');
-  $('signRequestBtn').disabled = !snap.canSign;
-  $('navSignBtn').disabled = !snap.canSign;
+  // 중요 표시(?marks=1): 점수 기준을 채웠어도 표시가 남아 있으면 서명을 열지 않는다
+  const signable = snap.canSign && keyMarksAllDone();
+  $('signRequestBtn').disabled = !signable;
+  $('navSignBtn').disabled = !signable;
   $('navPages').textContent = `페이지 ${currentPage}/${pageCount}`;
   $('navScore').textContent = `점수 ${formatScore(ev)}`;
 }
@@ -966,6 +1083,7 @@ const openSign = () => {
   endSegment('sign_requested'); measuring = false; updateMeasureBtn();
   renderPanel();
   if (!store.canSign()) { setMsg('signMsg', '기준 미달 페이지가 있어 서명을 열 수 없습니다.', 'warn'); return; }
+  if (!keyMarksAllDone()) { setMsg('signMsg', '밑줄·형광펜으로 표시된 중요 부분 중 아직 읽지 않은 곳이 있어 서명을 열 수 없습니다.', 'warn'); return; }
   $('signArea').hidden = false; setMsg('signMsg', '', '');
   $('signArea').scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
@@ -1029,7 +1147,9 @@ function resetSeal() {
 function buildSessionJson() {
   return sessionJson({ snapshot: store.getSnapshot(), detectorConfig: DETECTOR_CONFIG, blinkConfig: BLINK_CONFIG,
     cameraDiagnostics: tracker?.getDiagnostics() ?? null, detectorDiagnostics: detector?.getDiagnostics() ?? null, mode: MODE,
-    ocr: pdf?.ocrInfo ?? null, unreadSourcePages: pdf?.unreadSourcePages ?? [] });
+    ocr: pdf?.ocrInfo ?? null, unreadSourcePages: pdf?.unreadSourcePages ?? [],
+    // 중요 표시 응시 기록 (?marks=1, 개발용). 쪽마다 표시 개수와 채워진 표시의 응시 시간
+    ...(keyMarksOn ? { keySpans: [...keyTotals].map(([pageId, total]) => ({ pageId, total, done: [...(keyDone.get(pageId) ?? new Map())].map(([id, v]) => ({ id, ...v })) })) } : {}) });
 }
 $('dlSamplesBtn').addEventListener('click', () => store && download('samples.csv', samplesCsv(store.getLogs().samples), 'text/csv'));
 $('dlEventsBtn').addEventListener('click', () => store && download('events.csv', eventsCsv(store.getLogs().events), 'text/csv'));

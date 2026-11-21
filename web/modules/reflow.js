@@ -57,6 +57,108 @@ const CELL = '\u001f';   // 줄 안의 표 칸 경계 (나중에 │ 또는 공�
 const CELL_BAR = '\u00a0│ ';   // 표의 칸 구분. 앞을 줄바꿈 없는 공백으로 붙여 │가 줄 맨 앞에 오지 않게
 const CELL_GAP = 12;   // pt. 표의 칸 사이로 볼 최소 간격 (양쪽 정렬로 넓어진 낱말 간격은 8pt 이하였다)
 
+// ---------------------------------------------------------------- 0) 중요 표시 (PDF 주석의 밑줄·형광펜) — 개발용 시험 ?marks=1
+// 왜: 중요한 부분을 **응시하며** 읽었는지 따로 확인하려면(keySpans.js), 원본의 어느 글자가 표시됐는지를
+//     재배치된 줄의 가로 자리까지 들고 가야 한다. 그런데 재배치는 글을 문자열로 바꿔 줄·문단·쪽을 다시 짜므로
+//     글자 위치가 남지 않는다. 그래서 표시의 시작·끝에 **보이지 않는 표지 문자**(사용자 영역 U+E000~)를 심어
+//     문자열과 함께 흘려보내고, 줄 나눔이 끝난 뒤에 걷어 내며 "이 줄의 몇 번째 글자부터 몇 번째까지"로 바꾼다.
+//     표지를 심지 않으면(기본) 아래 코드는 아무 일도 하지 않는다.
+const MARK_OPEN = { Underline: '\ue000', Highlight: '\ue002' };
+const MARK_CLOSE = { Underline: '\ue001', Highlight: '\ue003' };
+const OPEN_TYPE = { '\ue000': 'Underline', '\ue002': 'Highlight' };
+const CLOSE_TYPE = { '\ue001': 'Underline', '\ue003': 'Highlight' };
+const HAS_MARK = /[\ue000-\ue003]/;
+/** 표지 문자를 걷어 낸 글 */
+export const stripMarks = (s) => (HAS_MARK.test(s) ? s.replace(/[\ue000-\ue003]/g, '') : s);
+
+/**
+ * PDF.js 주석 목록에서 밑줄·형광펜의 사각형을 꺼낸다 (쪽 좌표, 아래에서부터 잰 pt).
+ * @returns [{type:'Underline'|'Highlight', x0, x1, y0, y1}]
+ */
+export function annotationQuads(annots) {
+  const out = [];
+  for (const a of annots ?? []) {
+    if (a?.subtype !== 'Underline' && a?.subtype !== 'Highlight') continue;
+    const q = a.quadPoints;
+    const flat = q && (ArrayBuffer.isView(q) || typeof q[0] === 'number') ? Array.from(q)
+      : Array.isArray(q) ? q.flat().flatMap((p) => (p && typeof p === 'object' ? [p.x, p.y] : [p])) : null;
+    const push = (xs, ys) => {
+      if ([...xs, ...ys].every(Number.isFinite)) out.push({ type: a.subtype, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) });
+    };
+    if (flat && flat.length >= 8) {
+      for (let i = 0; i + 8 <= flat.length; i += 8) push([flat[i], flat[i + 2], flat[i + 4], flat[i + 6]], [flat[i + 1], flat[i + 3], flat[i + 5], flat[i + 7]]);
+    } else if (Array.isArray(a.rect) || ArrayBuffer.isView(a.rect)) {
+      push([a.rect[0], a.rect[2]], [a.rect[1], a.rect[3]]);
+    }
+  }
+  return out;
+}
+
+/**
+ * 글 조각에 표지 문자를 심는다. 조각의 가로 폭을 글자 수로 고르게 나눠 "몇 번째 글자부터"를 어림한다
+ * (한글은 폭이 고르고, 띄어쓰기 때문에 한 글자쯤 어긋날 수 있다 — 표시의 양 끝에 걸린 공백은 뺀다).
+ * @param items PDF.js getTextContent().items
+ * @param quads annotationQuads 결과
+ */
+export function markItems(items, quads) {
+  if (!quads?.length) return items;
+  return items.map((it) => {
+    if (!it.str || !it.width) return it;
+    const size = Math.hypot(it.transform[2], it.transform[3]) || it.height || 0;
+    const x0 = it.transform[4], x1 = x0 + it.width, mid = it.transform[5] + size * 0.3;   // 글자 가운데 높이
+    const n = it.str.length;
+    const ins = [];
+    for (const q of quads) {
+      if (mid < q.y0 - size * 0.2 || mid > q.y1 + size * 0.2) continue;
+      const a = Math.max(x0, q.x0), b = Math.min(x1, q.x1);
+      if (b - a < size * 0.4) continue;
+      let i0 = Math.round(((a - x0) / it.width) * n), i1 = Math.round(((b - x0) / it.width) * n);
+      while (i0 < i1 && /\s/.test(it.str[i0])) i0++;
+      while (i1 > i0 && /\s/.test(it.str[i1 - 1])) i1--;
+      if (i1 > i0) ins.push([i0, MARK_OPEN[q.type], 1], [i1, MARK_CLOSE[q.type], 0]);
+    }
+    if (!ins.length) return it;
+    ins.sort((p, q) => q[0] - p[0] || q[2] - p[2]);   // 뒤에서부터 끼워 넣는다. 같은 자리면 닫는 표지가 먼저 오게
+    let s = it.str;
+    for (const [i, ch] of ins) s = s.slice(0, i) + ch + s.slice(i);
+    return { ...it, str: s };
+  });
+}
+
+/**
+ * 한 문단을 나눈 줄들에서 표지를 걷어 내고, 줄마다 표시 구간을 글자 번호로 돌려준다.
+ * 표시가 줄을 넘어가면 앞줄은 줄 끝까지, 다음 줄은 줄 처음부터 이어진다. 문단을 넘어가지는 않는다.
+ * @returns [{text, marks:[{start, end, type}]}]  end는 포함하지 않는다
+ */
+export function resolveMarks(texts) {
+  let open = null;
+  return texts.map((t) => {
+    if (!open && !HAS_MARK.test(t)) return { text: t, marks: [] };
+    let clean = ''; const raw = [];
+    const continued = !!open;   // 앞줄에서 넘어온 표시로 시작하는 줄
+    let start = open ? 0 : null, type = open;
+    for (const ch of t) {
+      if (OPEN_TYPE[ch]) { if (start === null) { start = clean.length; type = OPEN_TYPE[ch]; } }
+      else if (CLOSE_TYPE[ch]) { if (start !== null) { raw.push({ start, end: clean.length, type }); start = null; type = null; } }
+      else clean += ch;
+    }
+    if (start !== null) raw.push({ start, end: clean.length, type });
+    open = start !== null ? type : null;
+    // 양 끝의 공백을 빼고, 공백만 사이에 둔 같은 종류의 표시는 하나로 잇는다 (조각마다 따로 심겼기 때문)
+    const marks = [];
+    for (const m of raw) {
+      let { start: s, end: e } = m;
+      while (s < e && clean[s] === ' ') s++;
+      while (e > s && clean[e - 1] === ' ') e--;
+      if (e <= s) continue;
+      const last = marks[marks.length - 1];
+      if (last && last.type === m.type && clean.slice(last.end, s).trim() === '') last.end = e;
+      else marks.push({ start: s, end: e, type: m.type, ...(continued && m.start === 0 && !marks.length ? { cont: true } : {}) });
+    }
+    return { text: clean, marks };
+  });
+}
+
 // ---------------------------------------------------------------- 1) 조각 → 줄
 
 /** 고정폭 글꼴 찾기: 영문·숫자 조각의 글자당 폭이 모두 0.6em 근처인 글꼴. (PDF.js는 글꼴 이름을 주지 않는다) */
@@ -172,20 +274,20 @@ export function linesToParagraphs(lines, pageWidth) {
       && prev.size === ln.size
       && (ln.x0 <= prev.x0 + 2 || colBreak || (cur.list && ln.x0 <= cur.x0 + 24))
       && prev.x1 + prev.size * 0.4 + ln.firstW > right[col(prev)] - 2     // 다음 줄 첫 낱말이 앞 줄에 들어갈 수 없었다 = 자동 줄바꿈
-      && !MARK.test(ln.t)
+      && !MARK.test(stripMarks(ln.t))
       && (colBreak || ln.base - prev.base < prev.size * 2.0);
     if (cont) {
-      const glue = /[_\-/]$/.test(cur.t) || /^\[\d/.test(ln.t) ? '' : ' ';   // 줄 끝 하이픈·밑줄, 인용 번호는 붙인다
+      const glue = /[_\-/]$/.test(stripMarks(cur.t)) || /^\[\d/.test(stripMarks(ln.t)) ? '' : ' ';   // 줄 끝 하이픈·밑줄, 인용 번호는 붙인다
       cur.t += glue + ln.t; cur.last = ln; continue;
     }
     const solo = !!prev && ln.x0 > prev.x0 + 20 && ln.base > prev.base;  // 가운데 정렬 줄
     cur = { t: ln.mono ? ln.raw : ln.t, kind: ln.mono ? 'code' : ln.size > body + 0.3 ? 'h' : 'p',
-            last: ln, row: ln.row, solo, list: MARK.test(ln.t), x0: ln.x0, x1: ln.x1, top: ln.base - ln.size };
+            last: ln, row: ln.row, solo, list: MARK.test(stripMarks(ln.t)), x0: ln.x0, x1: ln.x1, top: ln.base - ln.size };
     paras.push(cur);
   }
   return paras
     .map((p) => ({ kind: p.kind, text: p.kind === 'code' ? p.t : p.t.replace(/[\s\u00a0│]+\d+\s*\/\s*\d+$/, '').trim(), top: p.top, x0: p.x0, x1: p.x1 }))  // 꼬리말 "1 / 1"
-    .filter((p) => p.text && !/^(-\s*\d+\s*-|\d+\s*\/\s*\d+)$/.test(p.text.trim()));                                 // 쪽 번호
+    .filter((p) => stripMarks(p.text) && !/^(-\s*\d+\s*-|\d+\s*\/\s*\d+)$/.test(stripMarks(p.text).trim()));                                 // 쪽 번호
 }
 
 // ---------------------------------------------------------------- 3) 문단 → 13px 줄 → 쪽
@@ -215,10 +317,13 @@ export function wrapText(text, measure, width) {
  */
 export function layoutParagraphs(paras, measure, opts = REFLOW) {
   const items = [];
+  const width = (s) => measure(stripMarks(s));   // 표지 문자는 폭이 없다
+  // 표지를 걷어 낸 줄. 표시가 있는 줄에만 marks를 단다 — 표시가 없는 문서는 예전과 똑같은 모양이 나온다
+  const line = (kind, r) => (r.marks.length ? { kind, text: r.text, marks: r.marks } : { kind, text: r.text });
   for (const p of paras) {
     if (p.kind === 'figure') { items.push({ kind: 'figure', text: '', slots: opts.figureSlots, sourcePage: p.sourcePage }); continue; }
-    if (p.kind === 'code' && measure(p.text) <= opts.columnPx) { items.push({ kind: 'code', text: p.text }); continue; }  // 코드 줄은 공백 유지
-    for (const t of wrapText(p.text, measure, opts.columnPx)) items.push({ kind: p.kind, text: t });
+    if (p.kind === 'code' && width(p.text) <= opts.columnPx) { items.push(line('code', resolveMarks([p.text])[0])); continue; }  // 코드 줄은 공백 유지
+    for (const r of resolveMarks(wrapText(p.text, width, opts.columnPx))) items.push(line(p.kind, r));
   }
   const pages = []; let page = [], used = 0;
   for (const it of items) {
@@ -313,7 +418,7 @@ function insertFigures(paras, imgs, sourcePage, pageW) {
  *   scanPages: 글은 한 줄도 없는데 그림이 쪽 대부분을 덮는 원본 쪽 번호 — 스캔한 쪽이다.
  *     그대로 두면 그 쪽의 글이 **아무 표시 없이 빠진다**. 부른 쪽에서 글자 인식을 돌리거나 사용자에게 알려야 한다.
  */
-export async function reflowDocument(pdfDoc, measure, opts = REFLOW, { OPS } = {}) {
+export async function reflowDocument(pdfDoc, measure, opts = REFLOW, { OPS, marks = false } = {}) {
   // 이미 재배치해 둔 PDF(demo/13px)를 다시 열면 줄을 그대로 쓴다 — 다시 이으면 줄 나눔이 바뀐다
   const meta = await pdfDoc.getMetadata().catch(() => null);
   const already = /nundojang/.test(meta?.info?.Keywords ?? '') && /reflow/.test(meta?.info?.Keywords ?? '');
@@ -322,7 +427,9 @@ export async function reflowDocument(pdfDoc, measure, opts = REFLOW, { OPS } = {
     const page = await pdfDoc.getPage(n);
     const vp = page.getViewport({ scale: 1 });
     const tc = await page.getTextContent();
-    let lines = itemsToLines(tc.items, vp.height);
+    // 중요 표시(?marks=1): 밑줄·형광펜 주석이 덮은 글자에 표지를 심는다. 주석을 못 읽으면 표시 없이 간다
+    const quads = marks ? annotationQuads(await page.getAnnotations().catch(() => [])) : [];
+    let lines = itemsToLines(markItems(tc.items, quads), vp.height);
     if (already) {   // 그림 자리 안내문은 다시 그림 자리로
       pageParagraphs.push(lines.map((l) => { const m = /^그림 — 원본 (\d+)쪽\./.exec(l.t); return m ? { kind: 'figure', text: '', sourcePage: +m[1] } : { kind: 'p', text: l.t }; }));
       continue;
@@ -398,11 +505,21 @@ export function drawPage(canvas, pageLines, opts = REFLOW) {
     const top = opts.padTopPx + slot * opts.lineHeightPx;
     if (ln.kind === 'figure') { drawFigure(ctx, left, top, opts.columnPx, (ln.slots ?? opts.figureSlots) * opts.lineHeightPx, ln.sourcePage, opts); slot += ln.slots ?? opts.figureSlots; continue; }
     const y = top + opts.lineHeightPx / 2;
+    // 중요 표시: 글자 번호 → 가로 자리(px). 형광펜은 글자 뒤에 칠하고 밑줄은 글자 아래에 긋는다.
+    const marks = (ln.marks ?? []).map((m) => {
+      const x0 = ctx.measureText(ln.text.slice(0, m.start)).width, x1 = ctx.measureText(ln.text.slice(0, m.end)).width;
+      return { type: m.type, left: left + x0, width: x1 - x0, chars: m.end - m.start, text: ln.text.slice(m.start, m.end), ...(m.cont ? { cont: true } : {}) };
+    });
+    for (const m of marks) {
+      if (m.type === 'Highlight') { ctx.fillStyle = 'rgba(255, 221, 87, .55)'; ctx.fillRect(m.left - 1, y - opts.fontPx * 0.62, m.width + 2, opts.fontPx * 1.24); }
+      else { ctx.fillStyle = '#141414'; ctx.fillRect(m.left, y + opts.fontPx * 0.62, m.width, Math.max(1, opts.fontPx * 0.07)); }
+    }
     ctx.fillStyle = '#141414';
     ctx.fillText(ln.text, left, y);
     if (ln.kind === 'h') { ctx.strokeStyle = '#141414'; ctx.lineWidth = 0.45; ctx.strokeText(ln.text, left, y); }  // 굵게: 폭이 바뀌지 않게 획만 덧칠
     // 물방울은 글줄만 따라간다. textWidth는 실제 글자 폭(보조 점수: 앞줄이 긴 줄바꿈만 센다)
-    boxes.push({ top, height: opts.lineHeightPx, left, width: opts.columnPx, textWidth: Math.round(ctx.measureText(ln.text).width) });
+    boxes.push({ top, height: opts.lineHeightPx, left, width: opts.columnPx, textWidth: Math.round(ctx.measureText(ln.text).width),
+      ...(marks.length ? { marks } : {}) });
     slot += 1;
   }
   return boxes;
