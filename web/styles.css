@@ -100,6 +100,9 @@ button, input, label { font: inherit; }
 .calib.is-light .calib-instruction.is-warn, .calib.is-light .calib-light { color: #9a4b00; }
 .calib.is-light .calib-skip { color: #141414; background: rgba(0,0,0,.04); border-color: rgba(0,0,0,.25); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
 .calib.is-turning .calib-instruction { top: 12%; }
+/* 글 영역 보정(9점): 점이 화면 가운데에 모이므로 안내 글을 영역 아래로 내린다. 아래에 자리가 없으면 위로 */
+.calib.is-region .calib-instruction { top: auto; bottom: 28px; }
+.calib.is-region.is-region-top .calib-instruction { top: 60px; bottom: auto; }
 /* 첫 줄 맞춤: PDF가 보이게 배경을 비우고, 안내는 글을 가리지 않게 아래에 띄운다 */
 .calib.is-anchor, .calib.is-anchor.is-light { background: transparent; }
 .calib.is-anchor .calib-instruction { top: auto; bottom: 32px; width: auto; max-width: min(560px, 90vw); padding: 10px 18px; border-radius: 9999px; background: var(--ink); color: var(--white); }

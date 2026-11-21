@@ -138,22 +138,55 @@ export function poseReturnHint(reference, face, rules = POSE_RULES, head = null)
 
 const DARK_SCREEN_POINTS = Object.freeze([[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]);
 
+/** 글 영역 보정의 격자 (3×3 = 9점). 근거: docs/comprehension_evidence.md 20-10절 */
+export const REGION_GRID = Object.freeze({ cols: 3, rows: 3 });
+/** 이보다 작은 영역(CSS px)에는 글 영역 보정을 하지 않는다 — 점이 너무 붙으면 배율을 못 정한다 */
+export const REGION_MIN = Object.freeze({ width: 240, height: 120 });
+
 /**
- * 보정 점 순서. 흰 화면의 격자를 ㄹ자로 돌고, 가운데 점을 보며 고개를 돌린 뒤, 검정 화면에서 몇 점을 더 본다.
- * 화면 밝기가 달라도 맞도록 두 밝기의 표본을 함께 쓴다.
+ * 보정 점 순서.
+ *
+ * **region을 주면 그 영역 위에만 찍는다 (기본 3×3).** 고개 돌리기·검정 화면 점은 넣지 않는다.
+ *   왜: 2026-11-21에 바꾼 엔진(BlazeGaze)의 출력은 화면 좌우 끝에서 눌린다 (이웃 열 사이 기울기 0.52·1.79·1.95·0.66).
+ *   화면 전체를 곧은 식 하나로 맞추면 끝을 덮느라 배율이 커지고, 글이 놓인 가운데가 그만큼 늘어 찍힌다.
+ *   기록 5회를 다시 맞춰 보면 글 영역 안쪽 5점이 화면 전체 19점보다 가로 오차가 작다 (35px 대 113px).
+ *   고개 돌리기·검정 화면 점은 넣어도 빼도 오차가 같았다 (127.9 → 129.4 · 125.1px).
+ *   대신 **맞춘 영역 밖은 믿을 수 없다** — 영역은 글의 끝까지 덮어야 한다.
+ *
+ * region이 없으면 예전 배치다: 흰 화면의 격자(5×4)를 ㄹ자로 돌고, 가운데 점을 보며 고개를 돌린 뒤, 검정 화면에서 몇 점을 더 본다.
+ * @param {{left:number, top:number, width:number, height:number}|null} [o.region] 글이 놓이는 영역 (뷰포트 CSS px)
  */
-export function calibrationPoints(width, height, { cols = 5, rows = 4, margin = 0.08, turns = Object.keys(HEAD_TURNS), darkPoints = DARK_SCREEN_POINTS } = {}) {
-  const at = (i, n) => margin + (i * (1 - 2 * margin)) / (n - 1);
+export function calibrationPoints(width, height, { region = null, cols, rows, margin = 0.08, turns, darkPoints } = {}) {
+  const useRegion = usableRegion(region, width, height);
+  cols ??= useRegion ? REGION_GRID.cols : 5;
+  rows ??= useRegion ? REGION_GRID.rows : 4;
+  turns ??= useRegion ? [] : Object.keys(HEAD_TURNS);
+  darkPoints ??= useRegion ? [] : DARK_SCREEN_POINTS;
+  const x0 = useRegion ? useRegion.left : margin * width, x1 = useRegion ? useRegion.left + useRegion.width : (1 - margin) * width;
+  const y0 = useRegion ? useRegion.top : margin * height, y1 = useRegion ? useRegion.top + useRegion.height : (1 - margin) * height;
+  const at = (i, n, lo, hi) => (n > 1 ? lo + (i * (hi - lo)) / (n - 1) : (lo + hi) / 2);
   const points = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const col = r % 2 ? cols - 1 - c : c;
-      points.push({ index: points.length, x: at(col, cols) * width, y: at(r, rows) * height, theme: 'light' });
+      points.push({ index: points.length, x: at(col, cols, x0, x1), y: at(r, rows, y0, y1), theme: 'light' });
     }
   }
   for (const turn of turns) points.push({ index: points.length, x: width / 2, y: height / 2, theme: 'light', turn });
   for (const [nx, ny] of darkPoints) points.push({ index: points.length, x: nx * width, y: ny * height, theme: 'dark' });
   return points;
+}
+
+/**
+ * 글 영역을 화면 안으로 다듬는다. 쓸 수 없으면(없음·너무 작음) null — 그때는 예전 화면 전체 배치로 돌아간다.
+ * 점이 화면 가장자리에 붙으면 누르기도 보기도 어려워 edge만큼 안으로 들인다.
+ */
+export function usableRegion(region, width, height, { edge = 24, min = REGION_MIN } = {}) {
+  if (!region || ![region.left, region.top, region.width, region.height].every(Number.isFinite)) return null;
+  const left = clamp(region.left, edge, width - edge), right = clamp(region.left + region.width, edge, width - edge);
+  const top = clamp(region.top, edge, height - edge), bottom = clamp(region.top + region.height, edge, height - edge);
+  if (right - left < min.width || bottom - top < min.height) return null;
+  return { left, top, width: right - left, height: bottom - top };
 }
 
 const rms = (values) => Math.sqrt(values.reduce((a, v) => a + v * v, 0) / values.length);
