@@ -45,7 +45,7 @@ export async function createPdfManager({ canvasElement, config }) {
 
     await loadReflowFont(urls.reflowFontUrl);
     onProgress?.({ stage: 'reflow' });
-    reflowed = await reflowDocument(doc, createMeasure(layout), layout, { OPS: pdfjs.OPS });
+    reflowed = await reflowDocument(doc, createMeasure(layout), layout, { OPS: pdfjs.OPS, marks: config.keyMarks === true });
     if (reflowed.pages.length === 0) await openByOcr(onProgress);
     else if (reflowed.scanPages.length) await fillScanPages(onProgress);
     return { pageCount: reflowed.pages.length, sourcePageCount: doc.numPages, mode, ocr: ocrInfo, unreadSourcePages: [...unreadSourcePages] };

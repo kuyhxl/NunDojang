@@ -272,8 +272,36 @@ body.is-focus #paceMsg:not(:empty) {
 .read-gauge[hidden] { display: none; }
 .read-gauge .tick { position: absolute; width: 4px; border-radius: 2px; background: rgba(20,20,20,.12); transition: background-color .3s ease, box-shadow .3s ease; }
 .read-gauge .tick.is-read { background: #1f9d63; }
+/* 줄 추적기가 지나갔는데 읽음이 안 된 줄. 그 줄을 누르거나 ↑/↓로 골라 다시 읽으면 초록이 된다 */
+.read-gauge .tick.is-missed { background: #d93025; }
 .read-gauge .tick.is-current { box-shadow: 0 0 0 2px rgba(20,20,20,.18); }
 .read-gauge .tick.is-read.is-current { box-shadow: 0 0 0 2px rgba(31,157,99,.3); }
+/* 중요 표시 응시 확인 (?marks=1, keySpans.js). 지면 위에 겹쳐 그린다. 안 채워진 표시는 주황, 채워지면 초록.
+   안쪽 막대(b)가 머문 만큼 왼쪽부터 차오른다 — 눈이 이미 와 있는 자리라 시선을 끌어가지 않는다. */
+.key-marks { position: absolute; inset: 0; pointer-events: none; }
+.key-marks[hidden] { display: none; }
+.kmark { position: absolute; display: block; }
+.kmark b { position: absolute; left: 0; display: block; transition: width .12s linear, background-color .6s ease; }
+.kmark-ul::before { content: ""; position: absolute; left: 0; right: 0; bottom: 3px; height: 4px; border-radius: 2px; background: rgba(245,138,7,.35); }
+.kmark-ul b { bottom: 3px; height: 4px; border-radius: 2px; background: #f58a07; }
+.kmark-ul.is-done b { width: 100% !important; background: #1f9d63; }
+.kmark-ul.is-done::before { background: rgba(31,157,99,.25); }
+.kmark-hl b { top: 6px; bottom: 6px; border-radius: 3px; background: rgba(245,138,7,.28); mix-blend-mode: multiply; }
+.kmark-hl.is-done b { width: 100% !important; background: rgba(31,157,99,.38); }
+.kmark-hl::after { content: ""; position: absolute; left: 0; right: 0; bottom: 3px; height: 2px; background: rgba(245,138,7,.5); }
+.kmark-hl.is-done::after { background: rgba(31,157,99,.7); }
+/* 소리 내어 읽기(?marks=voice): 표시의 왼쪽에 작은 말풍선 점을 둔다. 채워지면 함께 초록이 된다 */
+.kmark.is-voice::after { content: ""; position: absolute; left: -12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: #f58a07; }
+.kmark.is-voice.kmark-hl::after { left: -12px; right: auto; bottom: auto; height: 7px; }
+.kmark.is-voice.is-done::after { background: #1f9d63; }
+/* 지나갔는데 안 채워진 중요 표시: 빨강 */
+.kmark-ul.is-missed::before { background: rgba(217,48,37,.45); }
+.kmark-ul.is-missed b { background: #d93025; }
+.kmark-hl.is-missed b { background: rgba(217,48,37,.3); }
+.kmark-hl.is-missed::after, .kmark.is-voice.is-missed::after { background: #d93025; }
+.kmark-hl.is-missed { box-shadow: inset 0 -2px 0 rgba(217,48,37,.7); }
+.key-tag { margin-left: 6px; padding: 1px 6px; border-radius: 9999px; font-style: normal; font-size: 11px; line-height: 14px; color: #7a4300; background: #ffd9a0; }
+.key-tag.is-done { color: #0b5c38; background: #bfe8d3; }
 /* 측정 중에는 지면의 줄을 눌러 줄 추적기를 그 줄로 옮길 수 있다 (다시 읽기). 읽음을 주는 것은 아니다 */
 body.is-measuring.is-reflow .page-frame { cursor: pointer; }
 /* 빠르게 지나가는 중: 지금 줄 표식만 주황으로. 줄을 바꿀 때마다 눈이 닿는 자리다 */

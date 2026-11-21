@@ -19,6 +19,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   viewMode: 'reflow',            // 'reflow' = 13px 한 단 재배치(기본, 11/3 결정) · 'original' = 원본 그대로(비교용)
   reflowSize: 13,                // 재배치 글자 크기. 20·24 = 큰 글자 시험판(개발용, 주소에 ?reflow=20 또는 24, 팀 합의 전)
   reflowFontPath: './vendor/fonts/NotoSansKR-Regular.ttf',  // 재배치 글꼴. demo/13px PDF와 같은 글꼴이라 줄 나눔이 같다
+  keyMarks: false,               // 중요 표시(밑줄·형광펜 주석)를 읽어 그 구간을 응시해야 통과시킨다 (개발용 시험, 주소에 ?marks=1)
   ocrEnabled: true,              // 텍스트 층이 없는 사진·스캔 PDF를 글자 인식으로 열어 본다 (주소에 ?ocr=0이면 끈다)
   ocrLangs: 'kor+eng',           // 인식 언어. vendor/tesseract/lang 에 받아 둔 것만 쓸 수 있다 (?ocrlang=kor)
   tesseractModulePath: './vendor/tesseract/tesseract.esm.min.js',
