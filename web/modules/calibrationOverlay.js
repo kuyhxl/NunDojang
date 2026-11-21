@@ -7,6 +7,8 @@ const UNREADABLE_MESSAGE = '눈을 충분히 읽지 못했어요. 눈을 뜨고 
 const FACE_FRONT_MESSAGE = '이제 고개를 정면으로 돌려 주세요';
 /** 결과 화면이 뜬 뒤 이만큼(ms)은 스페이스바를 받지 않는다 (연달아 누른 키로 건너뛰지 않게) */
 const RESULT_KEY_GUARD_MS = 600;
+/** 첫 줄 맞춤 점이 뜬 뒤 이만큼(ms)은 스페이스바를 받지 않는다 (쪽을 넘긴 키가 연달아 들어오는 것을 막는다) */
+const RECENTER_KEY_GUARD_MS = 500;
 const ANCHOR_MESSAGE = '첫 줄 왼쪽의 점을 바라보며 점을 클릭하거나 스페이스바를 눌러 주세요';
 // 첫 줄 맞춤·재중심은 점 하나로 치우침 전체를 정한다. 짧으면 그 순간의 흔들림이 그대로 남는다
 // (실측: 0.9초 분량일 때 맞춘 뒤 남은 치우침 6·7·45px). 다점 보정 한 점보다 길게 본다.
@@ -145,6 +147,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
   /** target이 있으면 PDF 위의 그 자리(첫 줄 맞춤), 없으면 화면 가운데에서 치우침을 바로잡는다. */
   function beginRecenter(target) {
     phase = 'wait-click'; show(pointsView); skip.hidden = false; skip.textContent = target ? '건너뛰기' : '취소';
+    recenterShownAt = performance.now();
     root.classList.toggle('is-anchor', !!target);   // PDF가 보이게 배경을 비운다
     points = [{ x: target?.x ?? window.innerWidth / 2, y: target?.y ?? window.innerHeight / 2, theme: 'light' }];
     pointIndex = 0;
@@ -251,6 +254,7 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
 
   let lastFit = null;
   let resultShownAt = 0;
+  let recenterShownAt = 0;
   function showResult() {
     root.classList.remove('is-light');
     phase = 'result'; show(resultView); skip.hidden = true; resultShownAt = performance.now();
@@ -277,7 +281,13 @@ export function createCalibrationOverlay({ sourceVideo, rules = POSE_RULES, coll
   }
 
   function onKey(e) {
-    if (e.code === 'Space' && pointsView.hidden === false) { e.preventDefault(); if (!e.repeat) startCollect(); }
+    if (e.code === 'Space' && pointsView.hidden === false) {
+      e.preventDefault();
+      // 첫 줄 맞춤·재중심: 점이 뜨고 0.5초는 받지 않는다. 스페이스바로 쪽을 넘긴 손이 연달아 눌러,
+      // 눈이 점에 닿기도 전에 맞춤이 시작되면 그 쪽 전체가 틀린 자리로 밀린다.
+      if (mode !== 'calibrate' && performance.now() - recenterShownAt < RECENTER_KEY_GUARD_MS) return;
+      if (!e.repeat) startCollect();
+    }
     // 결과 화면: 스페이스바·Enter로 "읽기 시작". 점을 누르던 손을 그대로 쓴다.
     // 마지막 점에서 누르고 있던 키(반복)나 곧바로 따라온 두 번째 누름으로 결과를 건너뛰지 않게, 화면이 뜨고 0.6초는 받지 않는다.
     else if ((e.code === 'Space' || e.code === 'Enter') && resultView.hidden === false) {

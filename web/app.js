@@ -812,12 +812,22 @@ $('searchInput').addEventListener('keydown', async (e) => {
   setMsg('viewerMsg', `"${e.target.value.trim()}"을(를) 찾지 못했습니다`, '');
 });
 document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !$('searchInput').disabled) { e.preventDefault(); $('searchInput').focus(); } });
-// 읽기 모드: Esc로 나가기, ←/→ · PageUp/PageDown으로 쪽 넘기기 (지면 밖 버튼이 가려지므로)
+// 읽기 모드: Esc로 나가기, ←/→ · PageUp/PageDown · 스페이스바(Shift+스페이스바는 앞쪽)로 쪽 넘기기 (지면 밖 버튼이 가려지므로)
 document.addEventListener('keydown', (e) => {
   if (!document.body.classList.contains('is-focus') || calibration.active || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'Escape') { e.preventDefault(); leaveFocus(); }
   else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); goToPage(currentPage + 1); }
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); goToPage(currentPage - 1); }
+  // 스페이스바: 다음 쪽. 보정 점·첫 줄 맞춤 점을 누르던 손 그대로 넘긴다 (그 화면들이 떠 있는 동안은 위에서 이미 걸러졌다).
+  else if (e.code === 'Space') {
+    const t = e.target instanceof Element ? e.target : null;
+    // 읽기 모드에서도 보이는 아래쪽 메뉴의 버튼과 글 입력 칸에서는 스페이스바가 제 일을 하게 둔다
+    if (t?.closest('.floatnav') || t?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    e.preventDefault();
+    // 지면 뒤에 가려진 버튼(예: 방금 누른 "측정 일시정지")에 초점이 남아 있으면 스페이스바가 그 버튼까지 눌러 버린다
+    if (t instanceof HTMLElement && t !== document.body) t.blur();
+    if (!e.repeat) goToPage(currentPage + (e.shiftKey ? -1 : 1));
+  }
   // ↑/↓: 줄 추적기를 한 줄 위·아래로 (다시 읽을 줄 고르기). 눈을 글에서 떼지 않고 쓸 수 있다
   else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && lineProg && measuring) {
     e.preventDefault();
